@@ -1,0 +1,161 @@
+<Window x:Class="SherpaManager.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Sherpa Manager" Width="1180" Height="760" MinWidth="940" MinHeight="620"
+        Background="{StaticResource WindowBrush}" WindowStartupLocation="CenterScreen"
+        Closing="Window_Closing" StateChanged="Window_StateChanged">
+    <Grid Background="{StaticResource WindowBrush}">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="276"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <Border Grid.Column="0" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,1,0">
+            <Grid Margin="20">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <StackPanel Margin="2,4,0,22">
+                    <TextBlock Text="S H E R P A" FontSize="21" FontWeight="Bold"/>
+                    <TextBlock Text="SIM RIG MANAGER" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="1,2,0,0"/>
+                </StackPanel>
+                <Grid Grid.Row="1" Margin="0,0,0,10">
+                    <TextBlock Text="PROFILES" Foreground="{StaticResource MutedTextBrush}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    <Button Content="＋" Width="34" Height="30" Padding="0" HorizontalAlignment="Right" ToolTip="New profile" Click="NewProfile_Click"/>
+                </Grid>
+                <ListBox x:Name="ProfilesList" Grid.Row="2" Background="Transparent" BorderThickness="0"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled" SelectionChanged="ProfilesList_SelectionChanged">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            <Setter Property="Padding" Value="0"/>
+                            <Setter Property="Margin" Value="0,0,0,7"/>
+                            <Setter Property="Background" Value="Transparent"/>
+                            <Setter Property="BorderThickness" Value="0"/>
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="ListBoxItem">
+                                        <Border x:Name="ItemBorder" Background="{TemplateBinding Background}" CornerRadius="8" Padding="12,11">
+                                            <ContentPresenter/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ItemBorder" Property="Background" Value="#201F28"/></Trigger>
+                                            <Trigger Property="IsSelected" Value="True"><Setter TargetName="ItemBorder" Property="Background" Value="#299B8DFF"/></Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="8"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                <Border Width="4" Height="30" CornerRadius="2" Background="{StaticResource AccentBrush}" HorizontalAlignment="Left"/>
+                                <StackPanel Grid.Column="1" Margin="5,0,0,0">
+                                    <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Text="{Binding Applications.Count, StringFormat={}{0} apps}" Foreground="{StaticResource MutedTextBrush}" FontSize="11"/>
+                                </StackPanel>
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                <StackPanel Grid.Row="3" Margin="0,14,0,0">
+                    <Border Background="{StaticResource Surface2Brush}" CornerRadius="7" Padding="10" Margin="0,0,0,9">
+                        <StackPanel>
+                            <TextBlock Text="CURRENT MODE" Foreground="{StaticResource MutedTextBrush}" FontSize="10"/>
+                            <TextBlock x:Name="ActiveProfileText" Text="None active" FontWeight="SemiBold" Margin="0,3,0,0"/>
+                        </StackPanel>
+                    </Border>
+                    <Button Content="Open profile file" Click="OpenProfileFile_Click" HorizontalAlignment="Stretch"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Column="1" Background="{StaticResource WindowBrush}" DataContext="{Binding ElementName=ProfilesList, Path=SelectedItem}">
+            <ScrollViewer Background="{StaticResource WindowBrush}" VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="34,28,34,42">
+                    <Grid Margin="0,0,0,25">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" FontSize="28" FontWeight="Bold"
+                                     Background="Transparent" BorderThickness="0" Padding="0" MaxLength="40"/>
+                            <TextBox Text="{Binding Description, UpdateSourceTrigger=PropertyChanged}" Foreground="{StaticResource MutedTextBrush}"
+                                     Background="Transparent" BorderThickness="0" Padding="0" Margin="2,7,0,0" MaxLength="120"/>
+                        </StackPanel>
+                        <Button x:Name="ActivateButton" Grid.Column="1" Style="{StaticResource PrimaryButton}" Content="ACTIVATE PROFILE"
+                                Click="ActivateProfile_Click" VerticalAlignment="Center" Margin="18,0,0,0"/>
+                    </Grid>
+
+                    <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="10" Padding="20" Margin="0,0,0,22">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="DISPLAY LAYOUT" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource MutedTextBrush}"/>
+                                <TextBlock Text="{Binding DisplaySummary}" TextWrapping="Wrap" Margin="0,8,20,0" FontSize="14"/>
+                                <TextBlock Text="Capture after arranging displays in Windows Settings. The snapshot includes positions, resolutions, orientation, and refresh rates."
+                                           TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,7,30,0"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button Content="Clear" Click="ClearDisplay_Click" Margin="0,0,8,0"/>
+                                <Button Content="Capture current" Click="CaptureDisplay_Click"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <Grid Margin="0,0,0,10">
+                        <StackPanel>
+                            <TextBlock Text="APPLICATIONS" FontSize="17" FontWeight="SemiBold"/>
+                            <TextBlock Text="Apps launch from top to bottom. Drag-free ordering keeps switches predictable."
+                                       Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,4,0,0"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom">
+                            <Button Content="↑" Width="36" Padding="0,9" ToolTip="Move up" Click="MoveApplicationUp_Click" Margin="0,0,6,0"/>
+                            <Button Content="↓" Width="36" Padding="0,9" ToolTip="Move down" Click="MoveApplicationDown_Click" Margin="0,0,8,0"/>
+                            <Button Content="Browse…" Click="BrowseApplication_Click" Margin="0,0,8,0"/>
+                            <Button Content="Remove" Click="RemoveApplication_Click" Margin="0,0,8,0"/>
+                            <Button Content="＋ Add app" Click="AddApplication_Click"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <DataGrid x:Name="ApplicationsGrid" ItemsSource="{Binding Applications}" AutoGenerateColumns="False" CanUserAddRows="False"
+                              AlternationCount="2"
+                              SelectionMode="Single" MinHeight="210" MaxHeight="350" RowEditEnding="ApplicationsGrid_RowEditEnding">
+                        <DataGrid.Columns>
+                            <DataGridCheckBoxColumn Header="Use" Binding="{Binding Enabled}" Width="48"/>
+                            <DataGridTextColumn Header="Name" Binding="{Binding Name, UpdateSourceTrigger=PropertyChanged}" Width="130"/>
+                            <DataGridTextColumn Header="Executable or URL" Binding="{Binding Path, UpdateSourceTrigger=PropertyChanged}" Width="*" MinWidth="210"/>
+                            <DataGridTextColumn Header="Arguments" Binding="{Binding Arguments, UpdateSourceTrigger=PropertyChanged}" Width="140"/>
+                            <DataGridTextColumn Header="Process name" Binding="{Binding ProcessName, UpdateSourceTrigger=PropertyChanged}" Width="105"/>
+                            <DataGridTextColumn Header="Delay ms" Binding="{Binding LaunchDelayMs}" Width="76"/>
+                            <DataGridCheckBoxColumn Header="Close on switch" Binding="{Binding CloseOnDeactivate}" Width="105"/>
+                            <DataGridCheckBoxColumn Header="Minimized" Binding="{Binding StartMinimized}" Width="76"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <Border Background="{StaticResource Surface2Brush}" CornerRadius="8" Padding="14" Margin="0,16,0,20">
+                        <Grid>
+                            <TextBlock x:Name="StatusText" Text="Ready" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center"/>
+                            <ProgressBar x:Name="BusyProgress" IsIndeterminate="True" Height="3" VerticalAlignment="Bottom" Visibility="Collapsed"
+                                         Foreground="{StaticResource AccentBrush}" Background="Transparent"/>
+                        </Grid>
+                    </Border>
+
+                    <Grid>
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="Duplicate profile" Click="DuplicateProfile_Click" Margin="0,0,8,0"/>
+                            <Button Content="Delete profile" Click="DeleteProfile_Click"/>
+                        </StackPanel>
+                        <TextBlock Text="Closing this window keeps Sherpa in the system tray." Foreground="{StaticResource MutedTextBrush}"
+                                   HorizontalAlignment="Right" VerticalAlignment="Center" FontSize="11"/>
+                    </Grid>
+                </StackPanel>
+            </ScrollViewer>
+
+            <Border x:Name="BusyOverlay" Background="#70131218" Visibility="Collapsed" Panel.ZIndex="5"/>
+        </Grid>
+    </Grid>
+</Window>
