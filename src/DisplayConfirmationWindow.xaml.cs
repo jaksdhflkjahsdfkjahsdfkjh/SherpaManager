@@ -5,8 +5,10 @@ namespace SherpaManager;
 
 public partial class DisplayConfirmationWindow : Window
 {
-    private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(1) };
-    private int _secondsRemaining = 15;
+    public const int RollbackSeconds = 10;
+
+    private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(250) };
+    private DateTime _rollbackDeadlineUtc;
 
     public bool KeepLayout { get; private set; }
 
@@ -14,21 +16,32 @@ public partial class DisplayConfirmationWindow : Window
     {
         InitializeComponent();
         SummaryText.Text = summary;
-        UpdateCountdown();
         _timer.Tick += Timer_Tick;
-        Loaded += (_, _) => _timer.Start();
+        Loaded += (_, _) =>
+        {
+            _rollbackDeadlineUtc = DateTime.UtcNow + TimeSpan.FromSeconds(RollbackSeconds);
+            UpdateCountdown();
+            _timer.Start();
+        };
         Closed += (_, _) => _timer.Stop();
     }
 
     private void Timer_Tick(object? sender, EventArgs e)
     {
-        _secondsRemaining--;
+        if (DateTime.UtcNow >= _rollbackDeadlineUtc)
+        {
+            Close();
+            return;
+        }
         UpdateCountdown();
-        if (_secondsRemaining <= 0) Close();
     }
 
-    private void UpdateCountdown() =>
-        CountdownText.Text = $"Reverting automatically in {_secondsRemaining} second{(_secondsRemaining == 1 ? string.Empty : "s")}.";
+    private void UpdateCountdown()
+    {
+        var secondsRemaining = Math.Max(0,
+            (int)Math.Ceiling((_rollbackDeadlineUtc - DateTime.UtcNow).TotalSeconds));
+        CountdownText.Text = $"Reverting automatically in {secondsRemaining} second{(secondsRemaining == 1 ? string.Empty : "s")}.";
+    }
 
     private void Keep_Click(object sender, RoutedEventArgs e)
     {

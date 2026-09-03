@@ -12,7 +12,6 @@ public sealed class LaunchApplication : ObservableObject
     private int _launchDelayMs;
     private bool _closeOnDeactivate = true;
     private bool _startMinimized = true;
-    private bool _forceCloseAfterTimeout;
     private bool _enabled = true;
 
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -28,7 +27,6 @@ public sealed class LaunchApplication : ObservableObject
     }
     public bool CloseOnDeactivate { get => _closeOnDeactivate; set => SetProperty(ref _closeOnDeactivate, value); }
     public bool StartMinimized { get => _startMinimized; set => SetProperty(ref _startMinimized, value); }
-    public bool ForceCloseAfterTimeout { get => _forceCloseAfterTimeout; set => SetProperty(ref _forceCloseAfterTimeout, value); }
     public bool Enabled { get => _enabled; set => SetProperty(ref _enabled, value); }
 
     public LaunchApplication Clone() => new()
@@ -41,7 +39,6 @@ public sealed class LaunchApplication : ObservableObject
         LaunchDelayMs = LaunchDelayMs,
         CloseOnDeactivate = CloseOnDeactivate,
         StartMinimized = StartMinimized,
-        ForceCloseAfterTimeout = ForceCloseAfterTimeout,
         Enabled = Enabled
     };
 }

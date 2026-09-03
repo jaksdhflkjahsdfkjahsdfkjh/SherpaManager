@@ -39,7 +39,6 @@ public sealed record PendingProcessCloseOutcome(
     string ApplicationName,
     string IdentityKey,
     ProcessCloseResult Result,
-    bool ForcePromptRecommended,
     long Generation);
 
 /// <summary>

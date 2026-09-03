@@ -16,7 +16,7 @@ internal static class Program
     {
         var tests = new (string Name, Func<Task> Run)[]
         {
-            ("New applications default to minimized without force-close", TestApplicationDefaultsAsync),
+            ("New applications default to minimized and close on switch", TestApplicationDefaultsAsync),
             ("Extensionless iRacing Start Menu URL resolves with lifecycle association", TestHiddenUrlExtensionAsync),
             ("A shell handler is not mistaken for the app it launches", TestShellHandlerIsolationAsync),
             ("Untrackable scripts report lifecycle limitations", TestUntrackableScriptWarningAsync),
@@ -25,8 +25,6 @@ internal static class Program
             ("Single-instance acknowledgement waits for completed activation", TestSingleInstanceDelayedAcknowledgementAsync),
             ("A rejected activation can hand ownership to a replacement instance", TestSingleInstanceShutdownHandoffAsync),
             ("Disabled destination app does not suppress closing", TestActivationClosingAsync),
-            ("Force-close requires confirmation and is remembered", TestForceCloseConfirmationAsync),
-            ("Declining force-close keeps the current profile active", TestForceCloseDeclineAbortsAsync),
             ("Duplicate launch identities start only once", TestDuplicateSuppressionAsync),
             ("Partial app launch remains a manageable active profile", TestPartialLaunchAsync),
             ("Invalid display snapshots fail before any NVIDIA action", TestDisplayPreflightAsync),
@@ -35,15 +33,15 @@ internal static class Program
             ("Profile duplication preserves display verification data", TestProfileCloneAsync),
             ("NVIDIA Surround fingerprint includes GPU and panel order", TestSurroundFingerprintAsync),
             ("NVIDIA Surround interop layout matches the x64 API", TestNvidiaInteropLayoutAsync),
+            ("Display rollback countdown is ten seconds", TestDisplayRollbackCountdownAsync),
             ("Visible fixture starts minimized and closes gracefully", TestVisibleFixtureAsync),
             ("Hidden fixture receives WM_CLOSE", TestHiddenFixtureAsync),
-            ("Force-close disabled leaves an unresponsive app running", TestForceCloseDisabledFixtureAsync),
-            ("Force-close terminates a fixture that ignores WM_CLOSE", TestForceCloseFixtureAsync),
+            ("Close on switch force-closes an app that ignores WM_CLOSE", TestAutomaticForceCloseFixtureAsync),
             ("Delayed launcher child window is minimized", TestDelayedLauncherMinimizationAsync),
             ("Closing a launcher also closes its delayed bin child", TestDelayedLauncherCloseAsync),
             ("Closing a launcher also closes a differently named child", TestDifferentlyNamedLauncherChildCloseAsync),
             ("Closing a launcher before handoff does not suppress relaunch", TestPreHandoffLauncherCloseAsync),
-            ("A delayed unresponsive child reports that force-close input is needed", TestDelayedCloseOutcomeAsync),
+            ("A delayed unresponsive child is force-closed automatically", TestDelayedCloseOutcomeAsync),
             ("Same-named executables are matched by exact path", TestSameNamedExecutableIsolationAsync)
         };
 
@@ -76,7 +74,7 @@ internal static class Program
     {
         var app = new LaunchApplication();
         Assert(app.StartMinimized, "StartMinimized should default to true.");
-        Assert(!app.ForceCloseAfterTimeout, "ForceCloseAfterTimeout should default to false for safe migration.");
+        Assert(app.CloseOnDeactivate, "CloseOnDeactivate should default to true.");
         Assert(app.Id != Guid.Empty, "Applications need a stable identifier.");
         app.LaunchDelayMs = int.MaxValue;
         Assert(app.LaunchDelayMs == LaunchApplication.MaximumLaunchDelayMs,
@@ -289,64 +287,6 @@ internal static class Program
         var document = new ProfileDocument { Profiles = [target] };
         await new ProfileActivationService(new DisplayConfigurationService(), processes).ActivateAsync(document, target, _ => { });
         Assert(processes.Launched.Count == 1, $"Expected one launch, got {processes.Launched.Count}.");
-    }
-
-    private static async Task TestForceCloseConfirmationAsync()
-    {
-        var processes = new FakeProcessService
-        {
-            CloseResult = new ProcessCloseResult(ProcessCloseStatus.StillRunning, 1, "still running")
-        };
-        var stubbornApp = new LaunchApplication
-        {
-            Name = "Stubborn app",
-            Path = "stubborn.exe",
-            Enabled = true,
-            CloseOnDeactivate = true,
-            ForceCloseAfterTimeout = false
-        };
-        var previous = new SwitchProfile { Name = "Previous", Applications = [stubbornApp] };
-        var target = new SwitchProfile { Name = "Target" };
-        var document = new ProfileDocument { ActiveProfileId = previous.Id, Profiles = [previous, target] };
-        var prompted = false;
-
-        var activated = await new ProfileActivationService(new DisplayConfigurationService(), processes)
-            .ActivateAsync(document, target, _ => { }, confirmForceClose: (_, _) =>
-            {
-                prompted = true;
-                return Task.FromResult(true);
-            });
-
-        Assert(activated, "Activation should complete after the confirmed force close.");
-        Assert(prompted, "The force-close confirmation was not requested.");
-        Assert(stubbornApp.ForceCloseAfterTimeout, "The confirmed force-close choice was not remembered.");
-        Assert(processes.Forced.Contains(stubbornApp.Id), "The app was not force-closed after confirmation.");
-    }
-
-    private static async Task TestForceCloseDeclineAbortsAsync()
-    {
-        var processes = new FakeProcessService
-        {
-            CloseResult = new ProcessCloseResult(ProcessCloseStatus.StillRunning, 1, "still running")
-        };
-        var stubbornApp = new LaunchApplication
-        {
-            Name = "Stubborn app",
-            Path = "stubborn.exe",
-            Enabled = true,
-            CloseOnDeactivate = true
-        };
-        var previous = new SwitchProfile { Name = "Previous", Applications = [stubbornApp] };
-        var targetApp = new LaunchApplication { Name = "Target app", Path = "target.exe" };
-        var target = new SwitchProfile { Name = "Target", Applications = [targetApp] };
-        var document = new ProfileDocument { ActiveProfileId = previous.Id, Profiles = [previous, target] };
-
-        var activated = await new ProfileActivationService(new DisplayConfigurationService(), processes)
-            .ActivateAsync(document, target, _ => { }, confirmForceClose: (_, _) => Task.FromResult(false));
-
-        Assert(!activated, "Activation continued after the required old application was left running.");
-        Assert(document.ActiveProfileId == previous.Id, "The active profile changed after the switch was cancelled.");
-        Assert(!processes.Launched.Contains(targetApp.Id), "A target application started after the switch was cancelled.");
     }
 
     private static async Task TestPartialLaunchAsync()
@@ -654,6 +594,13 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    private static Task TestDisplayRollbackCountdownAsync()
+    {
+        Assert(DisplayConfirmationWindow.RollbackSeconds == 10,
+            "Display rollback confirmation must remain a ten-second safety window.");
+        return Task.CompletedTask;
+    }
+
     private static async Task TestVisibleFixtureAsync()
     {
         using var directory = new TemporaryDirectory();
@@ -678,28 +625,9 @@ internal static class Program
         Assert(close.Status == ProcessCloseStatus.ClosedGracefully, close.Message);
     }
 
-    private static async Task TestForceCloseDisabledFixtureAsync()
+    private static async Task TestAutomaticForceCloseFixtureAsync()
     {
         var app = FixtureApplication("--ignore-close");
-        app.ForceCloseAfterTimeout = false;
-        var service = new ProcessService();
-        try
-        {
-            await service.LaunchAsync(app, CancellationToken.None);
-            var close = await service.CloseAsync(app, CancellationToken.None);
-            Assert(close.Status == ProcessCloseStatus.StillRunning, close.Message);
-            Assert(service.IsRunning(app), "An app with Force close disabled was terminated.");
-        }
-        finally
-        {
-            await service.ForceCloseAsync(app, CancellationToken.None);
-        }
-    }
-
-    private static async Task TestForceCloseFixtureAsync()
-    {
-        var app = FixtureApplication("--ignore-close");
-        app.ForceCloseAfterTimeout = true;
         var service = new ProcessService();
         await service.LaunchAsync(app, CancellationToken.None);
         var close = await service.CloseAsync(app, CancellationToken.None);
@@ -831,8 +759,7 @@ internal static class Program
             Path = Path.Combine(launcherDirectory, "WindowFixture.exe"),
             Arguments = $"--launcher-delay-ms=750 --child-path=\"{childPath}\" --started-file=\"{startedSignal}\"",
             StartMinimized = false,
-            CloseOnDeactivate = true,
-            ForceCloseAfterTimeout = false
+            CloseOnDeactivate = true
         };
         var service = new ProcessService();
         var childId = 0;
@@ -901,7 +828,6 @@ internal static class Program
         }
         finally
         {
-            app.ForceCloseAfterTimeout = true;
             await service.ForceCloseAsync(app, CancellationToken.None);
         }
     }
@@ -920,8 +846,7 @@ internal static class Program
             Path = Path.Combine(launcherDirectory, "WindowFixture.exe"),
             Arguments = $"--launcher-delay-ms=750 --child-path=\"{Path.Combine(childDirectory, "WindowFixture.exe")}\" --started-file=\"{startedSignal}\" --ignore-close",
             StartMinimized = true,
-            CloseOnDeactivate = true,
-            ForceCloseAfterTimeout = false
+            CloseOnDeactivate = true
         };
         var service = new ProcessService();
         var completion = new TaskCompletionSource<PendingProcessCloseOutcome>(
@@ -935,25 +860,18 @@ internal static class Program
             Assert(close.Status == ProcessCloseStatus.CloseScheduled, close.Message);
             Assert(await WaitForFileAsync(startedSignal, TimeSpan.FromSeconds(4)),
                 "The delayed stubborn child was not created.");
-            var completed = await completion.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            Assert(completed.Result.Status == ProcessCloseStatus.StillRunning, completed.Result.Message);
-            Assert(completed.ForcePromptRecommended,
-                "The first delayed force-close decision was not surfaced to the UI.");
+            var completed = await completion.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            Assert(completed.Result.Status == ProcessCloseStatus.ForcedClosed, completed.Result.Message);
             Assert(service.IsPendingCloseOutcomeCurrent(completed),
                 "A newly published delayed-close outcome was not current.");
+            Assert(!service.IsRunning(app), "The delayed unresponsive child was not force-closed.");
             service.CancelPendingClose(app);
             Assert(!service.IsPendingCloseOutcomeCurrent(completed),
                 "Reactivating the application did not invalidate its queued close outcome.");
-            app.ForceCloseAfterTimeout = true;
-            var superseded = await service.ForceCloseAsync(app, completed, CancellationToken.None);
-            Assert(superseded.Status == ProcessCloseStatus.Superseded,
-                "A stale delayed-close outcome was allowed to force-close a newly desired application.");
-            Assert(service.IsRunning(app), "The stale close outcome terminated the application.");
         }
         finally
         {
             service.PendingCloseCompleted -= recordCompletion;
-            app.ForceCloseAfterTimeout = true;
             await service.ForceCloseAsync(app, CancellationToken.None);
         }
     }
@@ -1066,8 +984,7 @@ internal static class Program
             ProcessName = "WindowFixture",
             Arguments = arguments,
             StartMinimized = true,
-            CloseOnDeactivate = true,
-            ForceCloseAfterTimeout = false
+            CloseOnDeactivate = true
         };
     }
 
@@ -1154,9 +1071,6 @@ internal static class Program
             Forced.Add(app.Id);
             return Task.FromResult(new ProcessCloseResult(ProcessCloseStatus.ForcedClosed, 1, "force-closed"));
         }
-        public Task<ProcessCloseResult> ForceCloseAsync(LaunchApplication app,
-            PendingProcessCloseOutcome expectedOutcome, CancellationToken cancellationToken) =>
-            ForceCloseAsync(app, cancellationToken);
     }
 
     private sealed class FakeNvidiaSurroundService : INvidiaSurroundService

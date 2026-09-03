@@ -8,7 +8,6 @@ public sealed class ProfileActivationService(DisplayConfigurationService display
 
     public async Task<bool> ActivateAsync(ProfileDocument document, SwitchProfile target,
         Action<string> report, Func<DisplaySnapshot, Task<bool>>? confirmDisplay = null,
-        Func<LaunchApplication, ProcessCloseResult, Task<bool>>? confirmForceClose = null,
         CancellationToken cancellationToken = default)
     {
         if (!await _activationLock.WaitAsync(0, cancellationToken))
@@ -28,7 +27,7 @@ public sealed class ProfileActivationService(DisplayConfigurationService display
             if (previous is not null && previous.Id != target.Id)
             {
                 var closeResult = await ClosePreviousApplicationsAsync(previous, targetApps, report,
-                    confirmForceClose, cancellationToken);
+                    cancellationToken);
                 warnings.AddRange(closeResult.Warnings);
                 if (!closeResult.CanContinue)
                 {
@@ -112,8 +111,7 @@ public sealed class ProfileActivationService(DisplayConfigurationService display
     }
 
     private async Task<PreviousApplicationsCloseResult> ClosePreviousApplicationsAsync(SwitchProfile previous, IReadOnlyCollection<LaunchApplication> targetApps,
-        Action<string> report, Func<LaunchApplication, ProcessCloseResult, Task<bool>>? confirmForceClose,
-        CancellationToken cancellationToken)
+        Action<string> report, CancellationToken cancellationToken)
     {
         var targetIdentities = targetApps.Select(processes.GetIdentityKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var scheduledIdentities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -140,12 +138,6 @@ public sealed class ProfileActivationService(DisplayConfigurationService display
         foreach (var closeTask in closeTasks)
         {
             var closeResult = await closeTask.Task;
-            if (closeResult.Status == ProcessCloseStatus.StillRunning && !closeTask.App.ForceCloseAfterTimeout &&
-                confirmForceClose is not null && await confirmForceClose(closeTask.App, closeResult))
-            {
-                closeTask.App.ForceCloseAfterTimeout = true;
-                closeResult = await processes.ForceCloseAsync(closeTask.App, cancellationToken);
-            }
             report(closeResult.Message);
             if (!closeResult.Succeeded)
             {

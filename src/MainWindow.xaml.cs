@@ -122,8 +122,7 @@ public partial class MainWindow : Window
         try
         {
             var activated = await _activator.ActivateAsync(_document, profile,
-                message => Dispatcher.Invoke(() => StatusText.Text = message), ConfirmDisplayAsync,
-                ConfirmForceCloseAsync);
+                message => Dispatcher.Invoke(() => StatusText.Text = message), ConfirmDisplayAsync);
             EnsureWindowIsVisible();
             if (activated)
             {
@@ -226,24 +225,6 @@ public partial class MainWindow : Window
         return Task.FromResult(confirmation.KeepLayout);
     }
 
-    private Task<bool> ConfirmForceCloseAsync(LaunchApplication app, ProcessCloseResult result)
-    {
-        var answer = System.Windows.MessageBox.Show(this,
-            $"{app.Name} ignored the normal close request.\n\nForce close it now and remember this choice for future profile switches? This can discard unsaved work. Choosing No cancels the switch when the app is still part of the current profile.",
-            "App is still running", MessageBoxButton.YesNo, MessageBoxImage.Warning,
-            MessageBoxResult.No);
-        return Task.FromResult(answer == MessageBoxResult.Yes);
-    }
-
-    private Task<bool> ConfirmDelayedForceCloseAsync(LaunchApplication app)
-    {
-        var answer = System.Windows.MessageBox.Show(this,
-            $"A delayed {app.Name} process ignored the normal close request.\n\nForce close it now and remember this choice for future profile switches? This can discard unsaved work. Choosing No leaves it running.",
-            "App is still running", MessageBoxButton.YesNo, MessageBoxImage.Warning,
-            MessageBoxResult.No);
-        return Task.FromResult(answer == MessageBoxResult.Yes);
-    }
-
     private void ProcessService_PendingCloseCompleted(PendingProcessCloseOutcome outcome)
     {
         if (!_acceptActivation || Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
@@ -270,38 +251,14 @@ public partial class MainWindow : Window
         finally { _handlingPendingCloseOutcomes = false; }
     }
 
-    private async Task HandlePendingCloseCompletedAsync(PendingProcessCloseOutcome outcome)
+    private Task HandlePendingCloseCompletedAsync(PendingProcessCloseOutcome outcome)
     {
         if (!_acceptActivation || !_processes.IsPendingCloseOutcomeCurrent(outcome) ||
             IsIdentityDesired(outcome.IdentityKey))
-            return;
+            return Task.CompletedTask;
         try
         {
             var result = outcome.Result;
-            var app = _profilesLoaded
-                ? _document.Profiles.SelectMany(profile => profile.Applications)
-                    .FirstOrDefault(candidate => candidate.Id == outcome.ApplicationId)
-                : null;
-
-            if (outcome.ForcePromptRecommended && app is not null && !app.ForceCloseAfterTimeout)
-            {
-                TryRestoreAndActivate();
-                if (await ConfirmDelayedForceCloseAsync(app))
-                {
-                    if (!_processes.IsPendingCloseOutcomeCurrent(outcome) ||
-                        IsIdentityDesired(outcome.IdentityKey))
-                        return;
-                    app.ForceCloseAfterTimeout = true;
-                    var preferenceSaved = await SaveAsync();
-                    result = await _processes.ForceCloseAsync(app, outcome, CancellationToken.None);
-                    if (!preferenceSaved)
-                        result = result with
-                        {
-                            Message = result.Message + " The force-close preference could not be saved."
-                        };
-                }
-            }
-
             StatusText.Text = result.Message;
             if (!result.Succeeded) ShowTrayWarning("Application still running", result.Message);
         }
@@ -309,6 +266,7 @@ public partial class MainWindow : Window
         {
             if (_acceptActivation) ShowError($"Could not finish closing {outcome.ApplicationName}", exception);
         }
+        return Task.CompletedTask;
     }
 
     private void ProcessService_PendingMinimizationCompleted(PendingProcessMinimizationOutcome outcome)
@@ -437,7 +395,7 @@ public partial class MainWindow : Window
         {
             var resolved = new LaunchTargetResolver().Resolve(app);
             StatusText.Text = resolved.IsShortcutOrProtocol && string.IsNullOrWhiteSpace(resolved.ProcessName)
-                ? $"Added {app.Name}. Set Process name to support already-running detection, minimizing, and closing for this shortcut."
+                ? $"Added {app.Name}, but its launched process could not be inferred. Select the actual executable when possible so Sherpa can manage it."
                 : resolved.IsShortcutOrProtocol && !resolved.HasExplicitProcessName
                     ? $"Added {app.Name}. Sherpa associated it with {resolved.ProcessName} for minimizing and closing."
                 : $"Added {app.Name}.";
@@ -453,8 +411,13 @@ public partial class MainWindow : Window
     private async void ProfilesList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!IsLoaded) return;
+        MainTabs.SelectedIndex = 0;
         await SaveAsync();
     }
+
+    private void ShowProfilePage_Click(object sender, RoutedEventArgs e) => MainTabs.SelectedIndex = 0;
+
+    private void ShowSettingsPage_Click(object sender, RoutedEventArgs e) => MainTabs.SelectedIndex = 1;
 
     private async void SettingsCheckBox_Changed(object sender, RoutedEventArgs e)
     {

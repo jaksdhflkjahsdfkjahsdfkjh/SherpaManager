@@ -12,10 +12,10 @@ Sherpa Manager is a Windows utility for switching a PC between work and sim-raci
 - Capture, validate, and restore an NVIDIA Surround grid through the official [NVAPI Mosaic interface](https://docs.nvidia.com/nvapi/group__mosaicapi.html), including panel order, bezel overlap, bezel-corrected mode selection, rotation, resolution, color depth, and refresh rate.
 - Validate monitor identities, verify the applied topology, and automatically roll back a failed display change.
 - Keep an on-disk emergency display snapshot and offer **Restore last** from the window and tray.
-- Apply newly captured layouts temporarily, then save them to Windows only after a 15-second confirmation.
+- Apply a newly captured layout temporarily the first time, then save it to Windows only after a 10-second confirmation.
 - Launch applications in order, resolve `.exe`, `.lnk`, `.url`, script, and protocol targets, and suppress duplicate entries.
 - Minimize delayed launcher windows such as MOZA Pit House after their real UI process appears.
-- Close visible or hidden application windows and, only with explicit opt-in, force-close applications that ignore a graceful request.
+- Close visible or hidden application windows and automatically force-close unresponsive apps selected for closing.
 - Activate the existing Sherpa window when opened again instead of creating another instance.
 - Choose whether closing the window exits fully or keeps Sherpa in the tray. The normal minimize button remains on the taskbar.
 
@@ -58,7 +58,7 @@ The `build/` directory is intentionally ignored. Publish packaged binaries throu
 1. Open **Windows display settings** from Sherpa.
 2. For **Work**, choose **Show only on 1** (or whichever numbered display is the work monitor), then select **Capture current** in Sherpa.
 3. For a non-Surround sim profile, choose **Show only on 2** or extend/arrange the rig displays as desired, then capture again.
-4. Use **Test**. The layout remains temporary until you choose **Keep layout**; otherwise Sherpa restores the previous topology after 15 seconds.
+4. Use **Test**. The layout remains temporary until you choose **Keep layout**; otherwise Sherpa restores the previous topology after 10 seconds.
 
 **Capture current** stores the complete active Windows CCD topology. That includes the same active-monitor selection represented by Windows' **Show only on 1/2** choices, plus primary display, positions, resolution, orientation, and refresh rate. Applying the profile disables paths that were inactive when it was captured. The monitors remain physically connected; “disabled” means removed from the active Windows desktop, not physically powered off.
 
@@ -75,11 +75,9 @@ During activation Sherpa closes the old profile's applications first, validates 
 
 1. Add an executable, Windows shortcut, Internet shortcut, script, or protocol URL.
 2. Leave **Minimized** enabled for companion utilities. Sherpa applies the normal minimized launch hint and then watches for delayed child windows.
-3. Leave **Close on switch** enabled when the application belongs only to that profile.
-4. **Force close** is off by default. If an app ignores a normal close request during a switch, Sherpa asks once before terminating it and can remember the choice for that app. Declining cancels that switch. If a delayed launcher child appears only after the switch has completed, declining leaves it running and Sherpa shows a warning. Do not enable force-close for software with unsaved work.
-5. Use **Process name** only when a shortcut or launcher starts a differently named process. This is a broad override: all processes with that name may be managed.
+3. Leave **Close on switch** enabled when the application belongs only to that profile. Sherpa first requests a normal exit and then force-closes the app if it remains unresponsive. Disable this option for software that may contain unsaved work.
 
-Windows commonly hides `.url` and `.lnk` extensions. Sherpa resolves an unambiguous hidden extension automatically, and the file picker includes both formats. The standard Steam iRacing shortcut (`steam://rungameid/266410`) is automatically associated with `iRacingUI`; Sherpa deliberately does not manage the persistent iRacing service process. If a shortcut, script, or custom protocol does not reveal its child process, Sherpa starts it but warns that detection, minimizing, and closing require an explicit **Process name**.
+Windows commonly hides `.url` and `.lnk` extensions. Sherpa resolves an unambiguous hidden extension automatically, and the file picker includes both formats. The standard Steam iRacing shortcut (`steam://rungameid/266410`) is automatically associated with `iRacingUI`; Sherpa deliberately does not manage the persistent iRacing service process. Sherpa follows child processes created by launchers. If a script or custom protocol does not reveal its launched process, select the actual executable when possible; otherwise Sherpa reports that it cannot manage that entry.
 
 ## Window and tray behavior
 
@@ -96,7 +94,7 @@ Windows adapter and target IDs can change after a reboot or driver restart. Sher
 
 If a restored layout is unusable:
 
-1. Wait for the 15-second test dialog to revert automatically, or choose **Revert now**.
+1. Wait for the 10-second confirmation dialog to revert automatically, or choose **Revert now**.
 2. Choose **Restore last** from the Sherpa tray menu.
 3. Press **Win+P** and choose **PC screen only** or **Extend**.
 4. Open **Settings → System → Display** and restore a working arrangement.
@@ -104,16 +102,16 @@ If a restored layout is unusable:
 
 ## Data and privacy
 
-Profiles are stored in `%APPDATA%\SherpaManager\profiles.json`. Sherpa has no accounts, telemetry, or network service. Executable paths and arguments remain local unless you share the profile file yourself.
+Profiles are stored in `%APPDATA%\SherpaManager\profiles.json`. Sherpa has no accounts, telemetry, or network service. Executable paths and profile settings remain local unless you share the profile file yourself.
 
 ## Known limitations
 
 - Windows only.
 - Display layouts are hardware-specific and are not intended to move between computers.
 - NVAPI Surround support depends on the installed NVIDIA GPU and driver. The sim profile must be captured while Surround is enabled because NVAPI only enumerates complete active grids; unsupported drivers and driver-reload-required topologies fail safely and require NVIDIA Control Panel.
-- Shortcut-launched applications need a process name when their actual process cannot be inferred.
-- Force closing an explicitly named process is intentionally broad and can discard unsaved work.
-- The automatic 15-second rollback requires Sherpa to remain running; the requested layout is not persisted before confirmation, but a process or system crash can still leave a temporary layout active until Windows reconfigures it.
+- Scripts and custom protocols may be launch-only when Windows does not expose the process they create.
+- Automatic force-closing can discard unsaved work; disable **Close on switch** for applications that must remain open safely.
+- The automatic 10-second rollback requires Sherpa to remain running; the requested layout is not persisted before confirmation, but a process or system crash can still leave a temporary layout active until Windows reconfigures it.
 - Downloaded unsigned builds may display a Windows SmartScreen warning.
 
 ## Contributing and security

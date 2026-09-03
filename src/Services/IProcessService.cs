@@ -14,6 +14,4 @@ public interface IProcessService
     Task<bool> MinimizeAsync(LaunchApplication app, TimeSpan timeout, CancellationToken cancellationToken);
     Task<ProcessCloseResult> CloseAsync(LaunchApplication app, CancellationToken cancellationToken);
     Task<ProcessCloseResult> ForceCloseAsync(LaunchApplication app, CancellationToken cancellationToken);
-    Task<ProcessCloseResult> ForceCloseAsync(LaunchApplication app, PendingProcessCloseOutcome expectedOutcome,
-        CancellationToken cancellationToken);
 }

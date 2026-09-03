@@ -123,7 +123,7 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
         {
             var unavailableActions = app.StartMinimized ? "detect, minimize, or close" : "detect or close";
             return Task.FromResult(new ProcessLaunchResult(true, false,
-                $"Started {app.Name}, but Sherpa cannot {unavailableActions} the application it launches until you set its Process name.",
+                $"Started {app.Name}, but Sherpa cannot {unavailableActions} its launched process. Select the actual executable when possible.",
                 LifecycleManageable: false));
         }
 
@@ -277,14 +277,6 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
                 return new ProcessCloseResult(ProcessCloseStatus.ClosedGracefully, processIds.Count, $"Closed {app.Name}.");
             }
 
-            if (!app.ForceCloseAfterTimeout)
-            {
-                if (settlingLaunch && _pendingCloseWatchers.TryGetValue(target.IdentityKey, out var watcher))
-                    watcher.MarkSynchronousFailureReported();
-                return new ProcessCloseResult(ProcessCloseStatus.StillRunning, processIds.Count,
-                    $"{app.Name} ignored the normal close request.");
-            }
-
             var forced = await ForceProcessesAsync(app, target, processes, cancellationToken);
             if (forced.Succeeded)
             {
@@ -303,8 +295,6 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
         var target = Resolve(app);
         CancelPendingMinimization(target.IdentityKey);
         var pendingLaunchExpiresAt = GetPendingLaunchExpiration(target.IdentityKey);
-        if (_pendingCloseWatchers.TryGetValue(target.IdentityKey, out var watcher))
-            watcher.UpgradeToForceClose();
         var processes = await GetMatchingProcessesAfterPendingLaunchAsync(app, target, cancellationToken);
         try
         {
@@ -323,47 +313,6 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
                 if (!_pendingCloseWatchers.ContainsKey(target.IdentityKey)) Forget(app, target);
             }
             return result;
-        }
-        finally { DisposeAll(processes); }
-    }
-
-    public async Task<ProcessCloseResult> ForceCloseAsync(LaunchApplication app,
-        PendingProcessCloseOutcome expectedOutcome, CancellationToken cancellationToken)
-    {
-        var target = Resolve(app);
-        if (app.Id != expectedOutcome.ApplicationId ||
-            !target.IdentityKey.Equals(expectedOutcome.IdentityKey, StringComparison.OrdinalIgnoreCase))
-            return SupersededForceCloseResult(app);
-
-        if (!IsPendingCloseOutcomeCurrent(expectedOutcome)) return SupersededForceCloseResult(app);
-
-        var processes = await GetMatchingProcessesAfterPendingLaunchAsync(app, target, cancellationToken);
-        try
-        {
-            processes = KeepRunningProcesses(processes);
-            ForceAttempt attempt;
-            PendingMinimizationRegistration? minimization;
-            lock (GetIntentGate(target.IdentityKey))
-            {
-                if (!_closeGenerations.TryGetValue(target.IdentityKey, out var generation) ||
-                    generation != expectedOutcome.Generation)
-                    return SupersededForceCloseResult(app);
-
-                // Consume the event generation before touching the process. A profile
-                // reactivation that wins this lock invalidates the event; if this close
-                // wins, its process termination belongs to the still-current intent.
-                _closeGenerations[target.IdentityKey] = NextCloseGeneration();
-                _pendingMinimizations.TryRemove(target.IdentityKey, out minimization);
-                if (processes.Count == 0)
-                {
-                    Forget(app, target);
-                    return new ProcessCloseResult(ProcessCloseStatus.NotRunning, 0, $"{app.Name} was not running.");
-                }
-                attempt = BeginForceProcesses(app, target, processes);
-            }
-
-            minimization?.Cancel();
-            return await CompleteForceAttemptAsync(app, processes, attempt, cancellationToken);
         }
         finally { DisposeAll(processes); }
     }
@@ -409,10 +358,6 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
                 ? $"Windows denied permission to close {app.Name}."
                 : $"{app.Name} is still running after the force-close attempt.");
     }
-
-    private static ProcessCloseResult SupersededForceCloseResult(LaunchApplication app) =>
-        new(ProcessCloseStatus.Superseded, 0,
-            $"Skipped an obsolete force-close request for {app.Name} because the application is wanted again.");
 
     private async Task<List<Process>> GetMatchingProcessesAfterPendingLaunchAsync(LaunchApplication app,
         ResolvedLaunchTarget target, CancellationToken cancellationToken)
@@ -683,14 +628,10 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
         PendingCloseRegistration registration;
         lock (GetIntentGate(target.IdentityKey))
         {
-            if (_pendingCloseWatchers.TryGetValue(target.IdentityKey, out var existing))
-            {
-                if (app.ForceCloseAfterTimeout) existing.UpgradeToForceClose();
-                return;
-            }
+            if (_pendingCloseWatchers.ContainsKey(target.IdentityKey)) return;
 
             var generation = NextCloseGeneration();
-            registration = new PendingCloseRegistration(app.ForceCloseAfterTimeout, generation);
+            registration = new PendingCloseRegistration(generation);
             _pendingCloseWatchers[target.IdentityKey] = registration;
             _closeGenerations[target.IdentityKey] = generation;
         }
@@ -752,8 +693,7 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
                                         closeDeadline = LaterOf(closeDeadline,
                                             now + TimeSpan.FromMilliseconds(6250));
                                     }
-                                    else if (registration.ForceCloseRequested &&
-                                             now - firstSeen[process.Id] >= TimeSpan.FromSeconds(6))
+                                    else if (now - firstSeen[process.Id] >= TimeSpan.FromSeconds(6))
                                     {
                                         try
                                         {
@@ -774,37 +714,34 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
                 await Task.Delay(250, cancellationToken).ConfigureAwait(false);
             }
 
-            if (registration.ForceCloseRequested)
+            var remainingProcesses = GetMatchingProcesses(app, target);
+            try
             {
-                var remainingProcesses = GetMatchingProcesses(app, target);
-                try
+                remainingProcesses = KeepRunningProcesses(remainingProcesses);
+                if (remainingProcesses.Count > 0)
                 {
-                    remainingProcesses = KeepRunningProcesses(remainingProcesses);
-                    if (remainingProcesses.Count > 0)
+                    ForceAttempt finalAttempt;
+                    lock (GetIntentGate(target.IdentityKey))
                     {
-                        ForceAttempt finalAttempt;
-                        lock (GetIntentGate(target.IdentityKey))
+                        lock (registration)
                         {
-                            lock (registration)
-                            {
-                                cancellationToken.ThrowIfCancellationRequested();
-                                if (!OwnsPendingClose(target.IdentityKey, registration))
-                                    throw new OperationCanceledException();
-                                finalAttempt = BeginForceProcesses(app, target, remainingProcesses);
-                            }
+                            cancellationToken.ThrowIfCancellationRequested();
+                            if (!OwnsPendingClose(target.IdentityKey, registration))
+                                throw new OperationCanceledException();
+                            finalAttempt = BeginForceProcesses(app, target, remainingProcesses);
                         }
-                        if (finalAttempt.Attempted)
-                        {
-                            foreach (var processId in finalAttempt.ProcessIds)
-                                forceAttemptedProcessIds.Add((int)processId);
-                        }
-                        accessDenied |= finalAttempt.AccessDenied;
-                        _ = await CompleteForceAttemptAsync(app, remainingProcesses, finalAttempt, cancellationToken)
-                            .ConfigureAwait(false);
                     }
+                    if (finalAttempt.Attempted)
+                    {
+                        foreach (var processId in finalAttempt.ProcessIds)
+                            forceAttemptedProcessIds.Add((int)processId);
+                    }
+                    accessDenied |= finalAttempt.AccessDenied;
+                    _ = await CompleteForceAttemptAsync(app, remainingProcesses, finalAttempt, cancellationToken)
+                        .ConfigureAwait(false);
                 }
-                finally { DisposeAll(remainingProcesses); }
             }
+            finally { DisposeAll(remainingProcesses); }
 
             RemoveExact(_pendingLaunches, target.IdentityKey, pendingExpiresAt);
             outcome = GetPendingCloseOutcome(app, target, observedProcessIds.Count,
@@ -843,10 +780,7 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
             }
 
             if (publishOutcome) PublishPendingCloseOutcome(new PendingProcessCloseOutcome(
-                app.Id, app.Name, target.IdentityKey, outcome!,
-                outcome!.Status == ProcessCloseStatus.StillRunning &&
-                !registration.ForceCloseRequested && !registration.SynchronousFailureReported,
-                registration.Generation));
+                app.Id, app.Name, target.IdentityKey, outcome!, registration.Generation));
         }
     }
 
@@ -1040,19 +974,12 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
         Unknown
     }
 
-    private sealed class PendingCloseRegistration(bool forceCloseRequested, long generation) : IDisposable
+    private sealed class PendingCloseRegistration(long generation) : IDisposable
     {
         private readonly CancellationTokenSource _cancellation = new();
-        private int _forceCloseRequested = forceCloseRequested ? 1 : 0;
-        private int _synchronousFailureReported;
 
         public CancellationToken Token => _cancellation.Token;
-        public bool ForceCloseRequested => Volatile.Read(ref _forceCloseRequested) != 0;
-        public bool SynchronousFailureReported => Volatile.Read(ref _synchronousFailureReported) != 0;
         public long Generation { get; } = generation;
-
-        public void UpgradeToForceClose() => Interlocked.Exchange(ref _forceCloseRequested, 1);
-        public void MarkSynchronousFailureReported() => Interlocked.Exchange(ref _synchronousFailureReported, 1);
 
         public void Cancel()
         {

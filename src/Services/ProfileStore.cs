@@ -154,7 +154,7 @@ public sealed class ProfileStore
                     display.SnapshotVersion = 2;
             }
         }
-        document.SchemaVersion = 4;
+        document.SchemaVersion = 5;
         return document;
     }
 
