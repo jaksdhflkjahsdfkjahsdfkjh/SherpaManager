@@ -80,7 +80,7 @@ While a profile switch, display test, or recovery operation is running, choose *
 
 1. Add an executable, Windows shortcut, Internet shortcut, script, or protocol URL.
 2. Leave **Minimized** enabled for companion utilities. Sherpa applies the normal minimized launch hint and then watches for delayed child windows.
-3. Leave **Close on switch** enabled when the application belongs only to that profile. Sherpa first requests a normal exit and then force-closes the app if it remains unresponsive. Disable this option for software that may contain unsaved work.
+3. **Close on switch** is enabled by default for newly added applications. Leave it enabled when the application belongs only to that profile: Sherpa first requests a normal exit and then force-terminates the matching process tree if it remains running. Disable it for software that may contain unsaved work; disabled applications are not closed or force-terminated during a profile switch.
 
 Windows commonly hides `.url` and `.lnk` extensions. Sherpa resolves an unambiguous hidden extension automatically, and the file picker includes both formats. The standard Steam iRacing shortcut (`steam://rungameid/266410`) is automatically associated with `iRacingUI`; Sherpa deliberately does not manage the persistent iRacing service process. Sherpa follows child processes created by launchers. If a script or custom protocol does not reveal its launched process, select the actual executable when possible; otherwise Sherpa reports that it cannot manage that entry.
 

@@ -34,7 +34,7 @@ Remove-Item Env:\SHERPA_HARDWARE_TESTS
 ## Code style
 
 - Preserve nullable reference type annotations.
-- Prefer safe, reversible behavior. Sherpa must not force-kill an application without explicit per-app user opt-in.
+- Prefer safe, reversible behavior. For an enabled application whose **Close on switch** option is enabled, Sherpa requests a normal exit first and automatically force-terminates the matching process tree only if it remains running. Preserve the per-app ability to disable **Close on switch**, and do not broaden process matching or bypass the graceful-close attempt.
 - Keep Windows interop isolated in services.
 - Avoid adding dependencies when the Windows or .NET APIs already cover the requirement cleanly.
 
