@@ -18,6 +18,7 @@ public partial class MainWindow : Window
     private readonly DisplayConfigurationService _displays = new();
     private readonly ProcessService _processes = new();
     private readonly ProfileActivationService _activator;
+    private readonly System.Drawing.Icon? _applicationIcon;
     private readonly Forms.NotifyIcon _trayIcon;
     private readonly HashSet<SwitchProfile> _observedProfiles = [];
     private readonly HashSet<string> _inFlightTargetIdentities = new(StringComparer.OrdinalIgnoreCase);
@@ -48,9 +49,10 @@ public partial class MainWindow : Window
         _activator = new ProfileActivationService(_displays, _processes);
         _processes.PendingCloseCompleted += ProcessService_PendingCloseCompleted;
         _processes.PendingMinimizationCompleted += ProcessService_PendingMinimizationCompleted;
+        _applicationIcon = TryLoadApplicationIcon();
         _trayIcon = new Forms.NotifyIcon
         {
-            Icon = System.Drawing.SystemIcons.Application,
+            Icon = _applicationIcon ?? System.Drawing.SystemIcons.Application,
             Text = "Sherpa Manager",
             Visible = true
         };
@@ -673,6 +675,22 @@ public partial class MainWindow : Window
         _displays.Dispose();
         _trayIcon.Visible = false;
         _trayIcon.Dispose();
+        _applicationIcon?.Dispose();
+    }
+
+    private static System.Drawing.Icon? TryLoadApplicationIcon()
+    {
+        try
+        {
+            var executablePath = Environment.ProcessPath;
+            return string.IsNullOrWhiteSpace(executablePath)
+                ? null
+                : System.Drawing.Icon.ExtractAssociatedIcon(executablePath);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     private void ExitApplication()

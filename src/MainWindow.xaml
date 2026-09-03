@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Sherpa Manager" Width="1180" Height="860" MinWidth="1000" MinHeight="820"
+        Icon="Assets/SherpaManager.ico"
         Background="{StaticResource WindowBrush}" WindowStartupLocation="CenterScreen"
         Closing="Window_Closing" StateChanged="Window_StateChanged">
     <Grid Background="{StaticResource WindowBrush}">
@@ -18,10 +19,36 @@
                     <RowDefinition Height="*"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
-                <StackPanel Margin="2,4,0,22">
-                    <TextBlock Text="S H E R P A" FontSize="21" FontWeight="Bold"/>
-                    <TextBlock Text="SIM RIG MANAGER" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="1,2,0,0"/>
-                </StackPanel>
+                <Grid Margin="2,4,0,22">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="48"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Viewbox Width="44" Height="44" Stretch="Uniform" SnapsToDevicePixels="True">
+                        <Grid Width="64" Height="64">
+                            <Grid.Clip>
+                                <RectangleGeometry Rect="0,0,64,64" RadiusX="14" RadiusY="14"/>
+                            </Grid.Clip>
+                            <Border CornerRadius="14">
+                                <Border.Background>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                        <GradientStop Color="#693BFF" Offset="0"/>
+                                        <GradientStop Color="#3618D8" Offset="1"/>
+                                    </LinearGradientBrush>
+                                </Border.Background>
+                            </Border>
+                            <Path Data="M 0,64 L 20,64 L 35,47 L 27,47 Z" Fill="#FF9700"/>
+                            <Path Data="M 29,18 L 18,18 C 11,18 9,21 9,25 C 9,29 12,31 18,31 L 23,31 C 29,31 31,35 31,39 C 31,44 27,47 21,47 L 9,47"
+                                  Stroke="White" StrokeThickness="7" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                            <Path Data="M 35,46 L 35,19 L 45,31 L 55,19 L 55,46"
+                                  Stroke="White" StrokeThickness="7" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                        </Grid>
+                    </Viewbox>
+                    <StackPanel Grid.Column="1" Margin="10,2,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="S H E R P A" FontSize="21" FontWeight="Bold"/>
+                        <TextBlock Text="SIM RIG MANAGER" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="1,2,0,0"/>
+                    </StackPanel>
+                </Grid>
                 <Grid Grid.Row="1" Margin="0,0,0,10">
                     <TextBlock Text="PROFILES" Foreground="{StaticResource MutedTextBrush}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
                     <Button Content="＋" Width="34" Height="30" Padding="0" HorizontalAlignment="Right" ToolTip="New profile" Click="NewProfile_Click"/>
