@@ -74,6 +74,9 @@ public partial class MainWindow : Window
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        var handledInterruptedRecovery = await OfferInterruptedDisplayRecoveryAsync();
+        if (!_acceptActivation) return;
+
         ProfileDocument document;
         try
         {
@@ -102,10 +105,64 @@ public partial class MainWindow : Window
         catch (Exception ex) { ShowError("Could not save profiles", ex); }
         RefreshActiveProfile();
         RebuildTrayMenu();
-        StatusText.Text = $"Profiles are stored in {_store.FilePath}";
+        if (!handledInterruptedRecovery)
+            StatusText.Text = $"Profiles are stored in {_store.FilePath}";
     }
 
     private SwitchProfile? SelectedProfile => ProfilesList.SelectedItem as SwitchProfile;
+
+    private async Task<bool> OfferInterruptedDisplayRecoveryAsync()
+    {
+        var interrupted = _displays.InterruptedTransaction;
+        if (interrupted is null || !_acceptActivation) return false;
+
+        EnsureWindowIsVisible();
+        var started = interrupted.StartedAtUtc is { } startedAtUtc
+            ? $"\n\nStarted: {startedAtUtc.ToLocalTime():g}"
+            : string.Empty;
+        var recoveryAvailability = interrupted.RecoveryAvailable
+            ? "Sherpa can restore the display layout from before that operation."
+            : "The automatic recovery snapshot is missing or damaged. If the current layout is unusable, use Win+P or Windows Display Settings.";
+        var answer = System.Windows.MessageBox.Show(this,
+            $"Sherpa detected a display operation that did not finish cleanly.\n\nRequested layout: {interrupted.RequestedSummary}{started}\n\n{recoveryAvailability}\n\nRestore the previous display layout now?\n\nChoose No to keep the current layout and dismiss this recovery.",
+            "Interrupted display operation", MessageBoxButton.YesNo, MessageBoxImage.Warning,
+            MessageBoxResult.Yes);
+
+        if (answer == MessageBoxResult.No)
+        {
+            try
+            {
+                _displays.DiscardInterruptedTransaction();
+                StatusText.Text = "Kept the current display layout and dismissed interrupted-operation recovery.";
+                RebuildTrayMenu();
+            }
+            catch (Exception exception)
+            {
+                ShowError("Could not dismiss display recovery", exception);
+            }
+            return true;
+        }
+
+        var cancellationToken = BeginBusyOperation("Recovering the interrupted display operation…");
+        try
+        {
+            var result = await _displays.RestoreInterruptedTransactionAsync(cancellationToken);
+            EnsureWindowIsVisible();
+            StatusText.Text = result.Message;
+            RebuildTrayMenu();
+        }
+        catch (OperationCanceledException)
+        {
+            EnsureWindowIsVisible();
+            StatusText.Text = "Interrupted-operation recovery was cancelled. It remains available from Restore previous.";
+        }
+        catch (Exception exception)
+        {
+            ShowError("Could not recover the interrupted display operation", exception);
+        }
+        finally { EndBusyOperation(); }
+        return true;
+    }
 
     private async void ActivateProfile_Click(object sender, RoutedEventArgs e)
     {
@@ -212,22 +269,31 @@ public partial class MainWindow : Window
 
     private async void RestoreLastDisplay_Click(object sender, RoutedEventArgs e)
     {
-        if (!_displays.HasRecoverySnapshot || _isBusy)
+        if (_isBusy) return;
+        var hasInterruptedTransaction = _displays.InterruptedTransaction is not null;
+        if (!hasInterruptedTransaction && !_displays.HasRecoverySnapshot)
         {
             StatusText.Text = "No previous display recovery snapshot is available.";
             return;
         }
-        var cancellationToken = BeginBusyOperation("Restoring the previous display layout…");
+        var cancellationToken = BeginBusyOperation(hasInterruptedTransaction
+            ? "Recovering the interrupted display operation…"
+            : "Restoring the previous display layout…");
         try
         {
-            var result = await _displays.RestoreLastRecoveryAsync(cancellationToken);
+            var result = hasInterruptedTransaction
+                ? await _displays.RestoreInterruptedTransactionAsync(cancellationToken)
+                : await _displays.RestoreLastRecoveryAsync(cancellationToken);
             EnsureWindowIsVisible();
             StatusText.Text = result.Message;
+            RebuildTrayMenu();
         }
         catch (OperationCanceledException)
         {
             EnsureWindowIsVisible();
-            StatusText.Text = "Display restore cancelled; the layout from before this operation was restored.";
+            StatusText.Text = hasInterruptedTransaction
+                ? "Interrupted-operation recovery was cancelled. It remains available from Restore previous."
+                : "Display restore cancelled; the layout from before this operation was restored.";
         }
         catch (Exception ex) { ShowError("Could not restore the previous display layout", ex); }
         finally { EndBusyOperation(); }
@@ -517,10 +583,13 @@ public partial class MainWindow : Window
             item.Font = new System.Drawing.Font(item.Font, profile.Id == _document.ActiveProfileId ? System.Drawing.FontStyle.Bold : System.Drawing.FontStyle.Regular);
             item.Click += async (_, _) => await Dispatcher.InvokeAsync(async () => await ActivateProfileAsync(profile));
         }
-        if (_displays.HasRecoverySnapshot)
+        var interruptedTransaction = _displays.InterruptedTransaction;
+        if (interruptedTransaction is not null || _displays.HasRecoverySnapshot)
         {
             menu.Items.Add(new Forms.ToolStripSeparator());
-            menu.Items.Add("Restore previous display layout", null,
+            menu.Items.Add(interruptedTransaction is not null
+                    ? "Recover interrupted display operation"
+                    : "Restore previous display layout", null,
                 async (_, _) => await Dispatcher.InvokeAsync(async () => await RestoreLastDisplayFromTrayAsync()));
         }
         menu.Items.Add(new Forms.ToolStripSeparator());
@@ -539,17 +608,30 @@ public partial class MainWindow : Window
     {
         ShowFromTray();
         if (_isBusy) return;
-        var cancellationToken = BeginBusyOperation("Restoring the previous display layout…");
+        var hasInterruptedTransaction = _displays.InterruptedTransaction is not null;
+        if (!hasInterruptedTransaction && !_displays.HasRecoverySnapshot)
+        {
+            StatusText.Text = "No previous display recovery snapshot is available.";
+            return;
+        }
+        var cancellationToken = BeginBusyOperation(hasInterruptedTransaction
+            ? "Recovering the interrupted display operation…"
+            : "Restoring the previous display layout…");
         try
         {
-            var result = await _displays.RestoreLastRecoveryAsync(cancellationToken);
+            var result = hasInterruptedTransaction
+                ? await _displays.RestoreInterruptedTransactionAsync(cancellationToken)
+                : await _displays.RestoreLastRecoveryAsync(cancellationToken);
             EnsureWindowIsVisible();
             StatusText.Text = result.Message;
+            RebuildTrayMenu();
         }
         catch (OperationCanceledException)
         {
             EnsureWindowIsVisible();
-            StatusText.Text = "Display restore cancelled; the layout from before this operation was restored.";
+            StatusText.Text = hasInterruptedTransaction
+                ? "Interrupted-operation recovery was cancelled. It remains available from Restore previous."
+                : "Display restore cancelled; the layout from before this operation was restored.";
         }
         catch (Exception ex) { ShowError("Could not restore the previous display layout", ex); }
         finally { EndBusyOperation(); }

@@ -34,6 +34,7 @@ internal static class Program
             ("Invalid display snapshots fail before any NVIDIA action", TestDisplayPreflightAsync),
             ("NVIDIA packed mode indexes validate without their advertised flag", TestNvidiaPackedModeIndexesAsync),
             ("Display recovery falls back to its backup", TestDisplayRecoveryBackupAsync),
+            ("Interrupted display transactions persist until completed", TestDisplayTransactionStoreAsync),
             ("Profile duplication preserves display verification data", TestProfileCloneAsync),
             ("NVIDIA Surround fingerprint includes GPU and panel order", TestSurroundFingerprintAsync),
             ("NVIDIA Surround interop layout matches the x64 API", TestNvidiaInteropLayoutAsync),
@@ -471,6 +472,48 @@ internal static class Program
             File.WriteAllText(store.FilePath, "corrupt again");
             Assert(store.Load()?.Summary == "safe",
                 "Saving a recovered display layout overwrote the last known-good backup with corrupt data.");
+            return Task.CompletedTask;
+        }
+        finally { Environment.SetEnvironmentVariable("SHERPA_MANAGER_DATA_DIR", previous); }
+    }
+
+    private static Task TestDisplayTransactionStoreAsync()
+    {
+        using var directory = new TemporaryDirectory();
+        var previous = Environment.GetEnvironmentVariable("SHERPA_MANAGER_DATA_DIR");
+        Environment.SetEnvironmentVariable("SHERPA_MANAGER_DATA_DIR", directory.Path);
+        try
+        {
+            var store = new DisplayTransactionStore();
+            store.Begin(CreateStoredDisplaySnapshot("before switch"), "requested sim layout");
+
+            var pending = store.GetPendingTransaction();
+            Assert(pending is not null, "The interrupted-transaction marker was not persisted.");
+            Assert(pending!.RecoveryAvailable, "The pre-change recovery snapshot was not persisted.");
+            Assert(pending.RequestedSummary == "requested sim layout", "The requested layout was not described.");
+            Assert(store.LoadRecovery().Summary == "before switch", "The wrong pre-change layout was loaded.");
+
+            try
+            {
+                store.Begin(CreateStoredDisplaySnapshot("replacement"), "overlapping operation");
+                throw new InvalidOperationException("An unresolved transaction was overwritten.");
+            }
+            catch (InvalidOperationException exception) when (exception.Message.Contains("waiting for recovery",
+                       StringComparison.OrdinalIgnoreCase))
+            {
+                // Expected: a new display operation must not destroy crash recovery.
+            }
+
+            File.WriteAllText(Path.Combine(directory.Path, "display-transaction.json"), "damaged marker");
+            pending = store.GetPendingTransaction();
+            Assert(pending is { RecoveryAvailable: true },
+                "A malformed marker hid the valid recovery snapshot.");
+
+            store.Complete();
+            Assert(!store.HasPendingTransaction && store.GetPendingTransaction() is null,
+                "Completed transaction files were not cleared.");
+            Assert(!File.Exists(Path.Combine(directory.Path, "display-transaction-recovery.json")),
+                "The completed transaction recovery snapshot was left behind.");
             return Task.CompletedTask;
         }
         finally { Environment.SetEnvironmentVariable("SHERPA_MANAGER_DATA_DIR", previous); }

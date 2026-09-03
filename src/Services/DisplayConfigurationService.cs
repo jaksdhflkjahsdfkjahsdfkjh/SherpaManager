@@ -31,16 +31,19 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
 
     private readonly INvidiaSurroundService _nvidiaSurround;
     private readonly DisplayRecoveryStore _recoveryStore;
+    private readonly DisplayTransactionStore _transactionStore;
 
     public DisplayConfigurationService(INvidiaSurroundService? nvidiaSurround = null,
-        DisplayRecoveryStore? recoveryStore = null)
+        DisplayRecoveryStore? recoveryStore = null, DisplayTransactionStore? transactionStore = null)
     {
         _nvidiaSurround = nvidiaSurround ?? new NvidiaSurroundService();
         _recoveryStore = recoveryStore ?? new DisplayRecoveryStore();
+        _transactionStore = transactionStore ?? new DisplayTransactionStore();
     }
 
     public string RecoveryFilePath => _recoveryStore.FilePath;
     public bool HasRecoverySnapshot => _recoveryStore.Load() is not null;
+    public InterruptedDisplayTransaction? InterruptedTransaction => _transactionStore.GetPendingTransaction();
 
     public NvidiaSurroundSnapshot GetNvidiaSurroundStatus() => _nvidiaSurround.GetStatus();
 
@@ -84,15 +87,17 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
 
     public Task<DisplayRestoreResult> RestoreAsync(DisplaySnapshot snapshot, NvidiaSurroundMode surroundMode,
         CancellationToken cancellationToken = default) =>
-        RestoreCoreAsync(snapshot, surroundMode, null, saveEmergencySnapshot: true, cancellationToken);
+        RestoreCoreAsync(snapshot, surroundMode, null, saveEmergencySnapshot: true,
+            trackInterruptedTransaction: true, cancellationToken);
 
     public Task<DisplayRestoreResult> RestoreAsync(DisplaySnapshot snapshot, NvidiaSurroundMode surroundMode,
         Func<DisplaySnapshot, Task<bool>> confirm, CancellationToken cancellationToken = default) =>
-        RestoreCoreAsync(snapshot, surroundMode, confirm, saveEmergencySnapshot: true, cancellationToken);
+        RestoreCoreAsync(snapshot, surroundMode, confirm, saveEmergencySnapshot: true,
+            trackInterruptedTransaction: true, cancellationToken);
 
     private async Task<DisplayRestoreResult> RestoreCoreAsync(DisplaySnapshot requested,
         NvidiaSurroundMode surroundMode, Func<DisplaySnapshot, Task<bool>>? confirm,
-        bool saveEmergencySnapshot, CancellationToken cancellationToken)
+        bool saveEmergencySnapshot, bool trackInterruptedTransaction, CancellationToken cancellationToken)
     {
         ValidateSnapshotStructures(requested);
         var emergencySnapshot = Capture();
@@ -100,6 +105,8 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
         var surroundWasManaged = surroundMode != NvidiaSurroundMode.Ignore;
         if (surroundWasManaged && emergencySnapshot.NvidiaSurround?.StatusKnown != true)
             throw new InvalidOperationException("Sherpa cannot change NVIDIA Surround because it could not capture a known rollback state. Try again after NVIDIA Control Panel reports the topology normally.");
+        if (trackInterruptedTransaction)
+            _transactionStore.Begin(emergencySnapshot, requested.Summary);
 
         try
         {
@@ -114,6 +121,7 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
             if (confirm is not null && !await confirm(settled))
             {
                 await RollbackAsync(emergencySnapshot, surroundWasManaged, CancellationToken.None);
+                if (trackInterruptedTransaction) _transactionStore.Complete();
                 return new DisplayRestoreResult(usedAdjustedModes,
                     "The display test was reverted; the requested layout was not saved to Windows.", Kept: false);
             }
@@ -124,6 +132,7 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
                 requireExactSemantics: true, cancellationToken);
 
             CopyLayout(committed, requested);
+            if (trackInterruptedTransaction) _transactionStore.Complete();
             return new DisplayRestoreResult(usedAdjustedModes,
                 usedAdjustedModes
                     ? "Display layout applied and verified. Windows selected compatible mode values, which Sherpa saved for this profile."
@@ -144,6 +153,15 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
                 rollbackMessage = $"Automatic rollback also failed: {rollbackFailure.Message} Use Win+P or Windows Display Settings to recover.";
             }
 
+            if (rollbackSucceeded && trackInterruptedTransaction)
+            {
+                try { _transactionStore.Complete(); }
+                catch (Exception clearFailure)
+                {
+                    rollbackSucceeded = false;
+                    rollbackMessage += $" The interrupted-transaction marker could not be cleared: {clearFailure.Message}";
+                }
+            }
             if (failure is OperationCanceledException && rollbackSucceeded) throw;
             throw new InvalidOperationException($"{failure.Message} {rollbackMessage}", failure);
         }
@@ -156,8 +174,26 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
         var surroundMode = snapshot.NvidiaSurround is { StatusKnown: true } surround
             ? surround.Enabled ? NvidiaSurroundMode.RequireEnabled : NvidiaSurroundMode.RequireDisabled
             : NvidiaSurroundMode.Ignore;
-        return await RestoreCoreAsync(snapshot, surroundMode, null, saveEmergencySnapshot: false, cancellationToken);
+        return await RestoreCoreAsync(snapshot, surroundMode, null, saveEmergencySnapshot: false,
+            trackInterruptedTransaction: true, cancellationToken);
     }
+
+    public async Task<DisplayRestoreResult> RestoreInterruptedTransactionAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (!_transactionStore.HasPendingTransaction)
+            throw new InvalidOperationException("No interrupted display transaction is available.");
+        var snapshot = _transactionStore.LoadRecovery();
+        var surroundMode = snapshot.NvidiaSurround is { StatusKnown: true } surround
+            ? surround.Enabled ? NvidiaSurroundMode.RequireEnabled : NvidiaSurroundMode.RequireDisabled
+            : NvidiaSurroundMode.Ignore;
+        var result = await RestoreCoreAsync(snapshot, surroundMode, null, saveEmergencySnapshot: false,
+            trackInterruptedTransaction: false, cancellationToken);
+        _transactionStore.Complete();
+        return result with { Message = "The display layout from before the interrupted operation was restored." };
+    }
+
+    public void DiscardInterruptedTransaction() => _transactionStore.Complete();
 
     private async Task ApplySurroundModeAsync(NvidiaSurroundSnapshot? expected, NvidiaSurroundMode mode,
         CancellationToken cancellationToken)

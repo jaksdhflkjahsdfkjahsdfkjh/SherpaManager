@@ -91,7 +91,7 @@ Windows commonly hides `.url` and `.lnk` extensions. Sherpa resolves an unambigu
 
 ## Display safety and recovery
 
-Before every new display change, Sherpa saves `%APPDATA%\SherpaManager\last-display-recovery.json`. Profile and display-recovery saves retain `.bak` copies, and Sherpa can load those copies if the primary JSON is damaged. **Restore last** does not overwrite the safe snapshot it is restoring.
+Before every new display change, Sherpa saves `%APPDATA%\SherpaManager\last-display-recovery.json`. It also writes the immediate pre-change layout to `display-transaction-recovery.json` and creates a small `display-transaction.json` marker before touching the display state. The marker is removed only after the requested layout or its automatic rollback has been verified. If Sherpa, Windows, or the graphics driver stops during that interval, Sherpa offers to restore the pre-change layout on its next launch. Profile and normal display-recovery saves retain `.bak` copies, and Sherpa can load those copies if the primary JSON is damaged. **Restore last** does not overwrite the safe snapshot it is restoring.
 
 Windows adapter and target IDs can change after a reboot or driver restart. Sherpa remaps them using the saved monitor device identity before applying a layout and fails closed when an identity is missing or ambiguous. Recapture both profiles after moving a monitor to another GPU or port, changing cabling, or replacing display hardware.
 
@@ -114,7 +114,7 @@ Profiles are stored in `%APPDATA%\SherpaManager\profiles.json`. Sherpa has no ac
 - NVAPI Surround support depends on the installed NVIDIA GPU and driver. The sim profile must be captured while Surround is enabled because NVAPI only enumerates complete active grids; unsupported drivers and driver-reload-required topologies fail safely and require NVIDIA Control Panel.
 - Scripts and custom protocols may be launch-only when Windows does not expose the process they create.
 - Automatic force-closing can discard unsaved work; disable **Close on switch** for applications that must remain open safely.
-- The automatic 10-second rollback requires Sherpa to remain running; the requested layout is not persisted before confirmation, but a process or system crash can still leave a temporary layout active until Windows reconfigures it.
+- The live 10-second countdown requires Sherpa to remain running. If the process or system stops during a display transaction, recovery resumes as an explicit restore offer the next time Sherpa starts; Win+P and Windows Display Settings remain the final manual recovery paths.
 - Downloaded unsigned builds may display a Windows SmartScreen warning.
 
 ## Contributing and security
