@@ -34,8 +34,10 @@ public partial class MainWindow : Window
     private bool _closeInProgress;
     private bool _activationOverridesClose;
     private bool _handlingPendingCloseOutcomes;
+    private bool _openingSettings;
     private volatile bool _acceptActivation = true;
     private WindowState _lastVisibleState = WindowState.Normal;
+    private SwitchProfile? _profileBeforeSettings;
 
     public MainWindow()
     {
@@ -412,14 +414,36 @@ public partial class MainWindow : Window
 
     private async void ProfilesList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!IsLoaded) return;
+        if (SelectedProfile is { } selectedProfile) _profileBeforeSettings = selectedProfile;
+        if (!IsLoaded || _openingSettings || SelectedProfile is null) return;
         MainTabs.SelectedIndex = 0;
         await SaveAsync();
     }
 
-    private void ShowProfilePage_Click(object sender, RoutedEventArgs e) => MainTabs.SelectedIndex = 0;
+    private void ProfileItem_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not ListBoxItem { DataContext: SwitchProfile profile })
+            return;
 
-    private void ShowSettingsPage_Click(object sender, RoutedEventArgs e) => MainTabs.SelectedIndex = 1;
+        _profileBeforeSettings = profile;
+        ProfilesList.SelectedItem = profile;
+        MainTabs.SelectedIndex = 0;
+    }
+
+    private void ShowProfilePage_Click(object sender, RoutedEventArgs e)
+    {
+        ProfilesList.SelectedItem ??= _profileBeforeSettings ?? _document.Profiles.FirstOrDefault();
+        MainTabs.SelectedIndex = 0;
+    }
+
+    private void ShowSettingsPage_Click(object sender, RoutedEventArgs e)
+    {
+        _profileBeforeSettings = SelectedProfile ?? _profileBeforeSettings;
+        _openingSettings = true;
+        ProfilesList.SelectedItem = null;
+        _openingSettings = false;
+        MainTabs.SelectedIndex = 1;
+    }
 
     private async void SettingsCheckBox_Changed(object sender, RoutedEventArgs e)
     {

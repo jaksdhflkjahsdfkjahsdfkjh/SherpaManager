@@ -54,9 +54,11 @@
                     <Button Content="＋" Width="34" Height="30" Padding="0" HorizontalAlignment="Right" ToolTip="New profile" Click="NewProfile_Click"/>
                 </Grid>
                 <ListBox x:Name="ProfilesList" Grid.Row="2" Background="Transparent" BorderThickness="0"
-                         ScrollViewer.HorizontalScrollBarVisibility="Disabled" SelectionChanged="ProfilesList_SelectionChanged">
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         SelectionChanged="ProfilesList_SelectionChanged">
                     <ListBox.ItemContainerStyle>
                         <Style TargetType="ListBoxItem">
+                            <EventSetter Event="PreviewMouseLeftButtonDown" Handler="ProfileItem_PreviewMouseLeftButtonDown"/>
                             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
                             <Setter Property="Padding" Value="0"/>
                             <Setter Property="Margin" Value="0,0,0,7"/>
@@ -176,10 +178,16 @@
                               AlternationCount="2"
                               SelectionMode="Single" MinHeight="210" MaxHeight="350" RowEditEnding="ApplicationsGrid_RowEditEnding">
                         <DataGrid.Columns>
-                            <DataGridCheckBoxColumn Header="Use" Binding="{Binding Enabled}" Width="48"/>
+                            <DataGridCheckBoxColumn Header="Use" Binding="{Binding Enabled}" Width="48"
+                                                    ElementStyle="{StaticResource DataGridCheckBoxStyle}"
+                                                    EditingElementStyle="{StaticResource DataGridCheckBoxStyle}"/>
                             <DataGridTextColumn Header="Name" Binding="{Binding Name, UpdateSourceTrigger=PropertyChanged}" Width="130"/>
-                            <DataGridCheckBoxColumn Header="Minimized" Binding="{Binding StartMinimized}" Width="76"/>
-                            <DataGridCheckBoxColumn Binding="{Binding CloseOnDeactivate}" Width="125">
+                            <DataGridCheckBoxColumn Header="Minimized" Binding="{Binding StartMinimized}" Width="76"
+                                                    ElementStyle="{StaticResource DataGridCheckBoxStyle}"
+                                                    EditingElementStyle="{StaticResource DataGridCheckBoxStyle}"/>
+                            <DataGridCheckBoxColumn Binding="{Binding CloseOnDeactivate}" Width="125"
+                                                    ElementStyle="{StaticResource DataGridCheckBoxStyle}"
+                                                    EditingElementStyle="{StaticResource DataGridCheckBoxStyle}">
                                 <DataGridCheckBoxColumn.Header>
                                     <TextBlock Text="Close on switch"
                                                ToolTip="Ask the app to exit when leaving this profile, then force close it if it does not respond."/>
