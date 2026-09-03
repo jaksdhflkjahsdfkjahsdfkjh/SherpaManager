@@ -33,6 +33,8 @@ public sealed class SwitchProfile : ObservableObject
             CapturedAtUtc = Display.CapturedAtUtc,
             SnapshotVersion = Display.SnapshotVersion,
             IsVerified = Display.IsVerified,
+            VerificationEnvironmentFingerprint = Display.VerificationEnvironmentFingerprint,
+            VerifiedAtUtc = Display.VerifiedAtUtc,
             Summary = Display.Summary,
             QueryFlags = Display.QueryFlags,
             PathStructureSize = Display.PathStructureSize,

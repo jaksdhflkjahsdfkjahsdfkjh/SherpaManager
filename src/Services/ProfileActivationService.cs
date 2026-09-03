@@ -35,10 +35,10 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
             if (target.Display is not null)
             {
                 report("Applying display layout…");
-                var needsConfirmation = document.Settings.ConfirmDisplayChanges &&
-                                        !target.Display.IsVerified && confirmDisplay is not null;
-                var displayResult = needsConfirmation
-                    ? await displays.RestoreAsync(target.Display, target.NvidiaSurroundMode, confirmDisplay!, cancellationToken)
+                var canConfirmDisplay = document.Settings.ConfirmDisplayChanges && confirmDisplay is not null;
+                var displayResult = canConfirmDisplay
+                    ? await displays.RestoreAsync(target.Display, target.NvidiaSurroundMode, confirmDisplay!,
+                        cancellationToken, confirmOnlyWhenVerificationChanged: true)
                     : await displays.RestoreAsync(target.Display, target.NvidiaSurroundMode, cancellationToken);
                 report(displayResult.Message);
                 if (!displayResult.Kept)
@@ -46,7 +46,6 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
                     report("The display test was reverted; profile applications were not started.");
                     return false;
                 }
-                if (needsConfirmation) target.Display.IsVerified = true;
                 displayApplied = true;
             }
             else report("Keeping the current display layout.");

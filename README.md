@@ -12,7 +12,7 @@ Sherpa Manager is a Windows utility for switching a PC between work and sim-raci
 - Capture, validate, and restore an NVIDIA Surround grid through the official [NVAPI Mosaic interface](https://docs.nvidia.com/nvapi/group__mosaicapi.html), including panel order, bezel overlap, bezel-corrected mode selection, rotation, resolution, color depth, and refresh rate.
 - Validate monitor identities, verify the applied topology, and automatically roll back a failed display change.
 - Keep an on-disk emergency display snapshot and offer **Restore last** from the window and tray.
-- Apply a newly captured layout temporarily the first time, then save it to Windows only after a 10-second confirmation.
+- Apply a newly captured layout temporarily the first time, then save it to Windows only after a 10-second confirmation. Sherpa asks again if the display environment later changes.
 - Cancel a profile or display operation while Sherpa safely restores the state from before it started.
 - Launch applications in order, resolve `.exe`, `.lnk`, `.url`, script, and protocol targets, and suppress duplicate entries.
 - Minimize delayed launcher windows such as MOZA Pit House after their real UI process appears.
@@ -71,6 +71,8 @@ The `build/` directory is intentionally ignored. Publish packaged binaries throu
 4. Test both directions and keep each confirmed layout.
 
 During activation Sherpa first validates and restores the saved NVIDIA grid (or disables Surround), applies and verifies the exact Windows monitor paths, and only then closes the old profile's applications and launches the target applications. If an old-profile application cannot be closed, Sherpa restores the previous display layout and restarts applications already closed by that switch. The NVIDIA change uses the current GPU topology and blocks any operation requiring a disruptive driver reload. If the saved displays are unavailable or NVAPI rejects the grid, Sherpa stops and restores the prior NVIDIA and Windows states instead of continuing blindly.
+
+After you keep a layout, Sherpa stores its additional environment check as a one-way fingerprint rather than duplicating driver and operating-system details in the profile. Profile activation checks it after applying the temporary layout. The confirmation stays first-use-only while the setup is stable, but returns after material changes such as a monitor or port remap, GPU/display-driver update, Windows version change, resolution or refresh-rate change, or NVIDIA Surround grid/bezel change. Profiles created by older Sherpa versions are confirmed once to create this fingerprint.
 
 While a profile switch, display test, or recovery operation is running, choose **Cancel** or press **Esc**. Sherpa stops the remaining work, closes target applications started by the cancelled switch, restores the previous display layout, and restarts previous-profile applications that it had closed.
 

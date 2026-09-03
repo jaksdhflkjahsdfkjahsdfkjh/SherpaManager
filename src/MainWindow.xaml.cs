@@ -252,7 +252,6 @@ public partial class MainWindow : Window
             StatusText.Text = result.Message;
             if (result.Kept)
             {
-                snapshot.IsVerified = true;
                 StatusText.Text = $"{profile.Name} display layout is verified.";
             }
             else StatusText.Text = "Reverted to the previous display layout without saving the test layout.";
@@ -541,7 +540,12 @@ public partial class MainWindow : Window
     private async void Profile_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName != nameof(SwitchProfile.NvidiaSurroundMode) || sender is not SwitchProfile profile) return;
-        if (profile.Display is not null) profile.Display.IsVerified = false;
+        if (profile.Display is not null)
+        {
+            profile.Display.IsVerified = false;
+            profile.Display.VerificationEnvironmentFingerprint = string.Empty;
+            profile.Display.VerifiedAtUtc = null;
+        }
         await SaveAsync();
     }
 

@@ -8,7 +8,8 @@ public interface IDisplayConfigurationService
         CancellationToken cancellationToken = default);
 
     Task<DisplayRestoreResult> RestoreAsync(DisplaySnapshot snapshot, NvidiaSurroundMode surroundMode,
-        Func<DisplaySnapshot, Task<bool>> confirm, CancellationToken cancellationToken = default);
+        Func<DisplaySnapshot, Task<bool>> confirm, CancellationToken cancellationToken = default,
+        bool confirmOnlyWhenVerificationChanged = false);
 
     Task<DisplayRestoreResult> RestoreLastRecoveryAsync(CancellationToken cancellationToken = default);
 }

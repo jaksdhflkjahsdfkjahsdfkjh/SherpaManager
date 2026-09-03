@@ -26,6 +26,8 @@ internal static class Program
             ("A rejected activation can hand ownership to a replacement instance", TestSingleInstanceShutdownHandoffAsync),
             ("Disabled destination app does not suppress closing", TestActivationClosingAsync),
             ("Display layout is applied before old applications close", TestTransactionalActivationOrderingAsync),
+            ("Profile activation rechecks display verification environment", TestVerificationEnvironmentRecheckAsync),
+            ("Display verification requires the same saved environment", TestVerificationEnvironmentPolicyAsync),
             ("Rejected display layout leaves old applications running", TestRejectedDisplayLeavesApplicationsAsync),
             ("Failed application close restores the previous profile", TestFailedCloseRestoresPreviousProfileAsync),
             ("Cancelled application launch restores the previous profile", TestCancelledLaunchRestoresPreviousProfileAsync),
@@ -299,6 +301,74 @@ internal static class Program
         var closeIndex = processes.Events.IndexOf("close:previous.exe");
         Assert(displayIndex >= 0 && closeIndex > displayIndex,
             "The previous application was closed before the target display layout was ready.");
+    }
+
+    private static async Task TestVerificationEnvironmentRecheckAsync()
+    {
+        var processes = new FakeProcessService();
+        var displays = new FakeDisplayConfigurationService(processes.Events);
+        var target = new SwitchProfile
+        {
+            Name = "Target",
+            Display = new DisplaySnapshot
+            {
+                IsVerified = true,
+                VerificationEnvironmentFingerprint = "saved-environment"
+            }
+        };
+        var document = new ProfileDocument { Profiles = [target] };
+        var confirmations = 0;
+
+        displays.VerificationEnvironmentChanged = false;
+        var activated = await new ProfileActivationService(displays, processes)
+            .ActivateAsync(document, target, _ => { }, _ =>
+            {
+                confirmations++;
+                return Task.FromResult(true);
+            });
+
+        Assert(activated, "Activation should complete when the verified environment still matches.");
+        Assert(displays.ConfirmationRestoreCalls == 1 && displays.ConfirmOnlyWhenVerificationChanged,
+            "Activation did not ask the display service to recheck the saved environment fingerprint.");
+        Assert(confirmations == 0,
+            "A stable, already verified display environment unexpectedly asked for confirmation again.");
+
+        displays.VerificationEnvironmentChanged = true;
+        activated = await new ProfileActivationService(displays, processes)
+            .ActivateAsync(document, target, _ => { }, _ =>
+            {
+                confirmations++;
+                return Task.FromResult(true);
+            });
+
+        Assert(activated, "Activation should complete after the changed environment is confirmed.");
+        Assert(confirmations == 1,
+            "A changed display environment did not require a fresh confirmation.");
+    }
+
+    private static Task TestVerificationEnvironmentPolicyAsync()
+    {
+        var matches = typeof(DisplayConfigurationService).GetMethod("VerificationEnvironmentMatches",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException("The display verification policy was not found.");
+        var snapshot = new DisplaySnapshot
+        {
+            IsVerified = true,
+            VerificationEnvironmentFingerprint = "ABC123"
+        };
+
+        Assert((bool)(matches.Invoke(null, [snapshot, "ABC123"]) ?? false),
+            "An unchanged verified environment was not accepted.");
+        Assert(!(bool)(matches.Invoke(null, [snapshot, "DIFFERENT"]) ?? true),
+            "A changed environment incorrectly remained verified.");
+        snapshot.VerificationEnvironmentFingerprint = string.Empty;
+        Assert(!(bool)(matches.Invoke(null, [snapshot, "ABC123"]) ?? true),
+            "A legacy profile without an environment fingerprint incorrectly skipped confirmation.");
+        snapshot.VerificationEnvironmentFingerprint = "ABC123";
+        snapshot.IsVerified = false;
+        Assert(!(bool)(matches.Invoke(null, [snapshot, "ABC123"]) ?? true),
+            "An unverified profile incorrectly skipped confirmation.");
+        return Task.CompletedTask;
     }
 
     private static async Task TestRejectedDisplayLeavesApplicationsAsync()
@@ -633,6 +703,9 @@ internal static class Program
             Display = new DisplaySnapshot
             {
                 SnapshotVersion = 3,
+                IsVerified = true,
+                VerificationEnvironmentFingerprint = "ABC123",
+                VerifiedAtUtc = new DateTime(2026, 9, 3, 20, 0, 0, DateTimeKind.Utc),
                 ActiveTargets = [new DisplayTargetSnapshot
                 {
                     Identity = "monitor",
@@ -674,6 +747,10 @@ internal static class Program
             "The cloned profile lost its verified NVIDIA status.");
         Assert(clone.Display?.NvidiaSurround?.GridCells.Single().GpuBusId == 4,
             "The cloned profile lost its NVIDIA GPU/grid fingerprint.");
+        Assert(clone.Display?.IsVerified == true &&
+               clone.Display.VerificationEnvironmentFingerprint == "ABC123" &&
+               clone.Display.VerifiedAtUtc == profile.Display.VerifiedAtUtc,
+            "The cloned profile lost its display verification environment.");
         profile.Display.NvidiaSurround.FullGridCaptured = true;
         profile.Display.NvidiaSurround.DisplayGrids = [CreateCapturedSurroundGrid()];
         clone = profile.Clone();
@@ -1272,6 +1349,9 @@ internal static class Program
         public DisplayRestoreResult RecoveryResult { get; set; } =
             new(false, "display restored");
         public int RecoveryRestoreCalls { get; private set; }
+        public int ConfirmationRestoreCalls { get; private set; }
+        public bool ConfirmOnlyWhenVerificationChanged { get; private set; }
+        public bool VerificationEnvironmentChanged { get; set; } = true;
 
         public Task<DisplayRestoreResult> RestoreAsync(DisplaySnapshot snapshot,
             NvidiaSurroundMode surroundMode, CancellationToken cancellationToken = default)
@@ -1282,9 +1362,14 @@ internal static class Program
 
         public async Task<DisplayRestoreResult> RestoreAsync(DisplaySnapshot snapshot,
             NvidiaSurroundMode surroundMode, Func<DisplaySnapshot, Task<bool>> confirm,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            bool confirmOnlyWhenVerificationChanged = false)
         {
             events.Add("display:apply");
+            ConfirmationRestoreCalls++;
+            ConfirmOnlyWhenVerificationChanged = confirmOnlyWhenVerificationChanged;
+            if (confirmOnlyWhenVerificationChanged && !VerificationEnvironmentChanged)
+                return TargetResult;
             return await confirm(snapshot) ? TargetResult : new DisplayRestoreResult(false, "reverted", Kept: false);
         }
 

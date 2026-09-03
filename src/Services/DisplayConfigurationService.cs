@@ -1,5 +1,8 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
+using Microsoft.Win32;
 using SherpaManager.Models;
 using Forms = System.Windows.Forms;
 
@@ -26,6 +29,7 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
     private const uint DisplayConfigModeInfoTypeDesktopImage = 3;
     private const uint InvalidModeIndex = 0xffffffff;
     private const uint GetTargetName = 2;
+    private const uint GetAdapterName = 4;
     private const int ErrorInsufficientBuffer = 122;
     private const int ErrorBadConfiguration = 1610;
 
@@ -88,16 +92,18 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
     public Task<DisplayRestoreResult> RestoreAsync(DisplaySnapshot snapshot, NvidiaSurroundMode surroundMode,
         CancellationToken cancellationToken = default) =>
         RestoreCoreAsync(snapshot, surroundMode, null, saveEmergencySnapshot: true,
-            trackInterruptedTransaction: true, cancellationToken);
+            trackInterruptedTransaction: true, confirmOnlyWhenVerificationChanged: false, cancellationToken);
 
     public Task<DisplayRestoreResult> RestoreAsync(DisplaySnapshot snapshot, NvidiaSurroundMode surroundMode,
-        Func<DisplaySnapshot, Task<bool>> confirm, CancellationToken cancellationToken = default) =>
+        Func<DisplaySnapshot, Task<bool>> confirm, CancellationToken cancellationToken = default,
+        bool confirmOnlyWhenVerificationChanged = false) =>
         RestoreCoreAsync(snapshot, surroundMode, confirm, saveEmergencySnapshot: true,
-            trackInterruptedTransaction: true, cancellationToken);
+            trackInterruptedTransaction: true, confirmOnlyWhenVerificationChanged, cancellationToken);
 
     private async Task<DisplayRestoreResult> RestoreCoreAsync(DisplaySnapshot requested,
         NvidiaSurroundMode surroundMode, Func<DisplaySnapshot, Task<bool>>? confirm,
-        bool saveEmergencySnapshot, bool trackInterruptedTransaction, CancellationToken cancellationToken)
+        bool saveEmergencySnapshot, bool trackInterruptedTransaction,
+        bool confirmOnlyWhenVerificationChanged, CancellationToken cancellationToken)
     {
         ValidateSnapshotStructures(requested);
         var emergencySnapshot = Capture();
@@ -118,7 +124,17 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
             var settled = await WaitForAppliedSnapshotAsync(prepared, surroundMode,
                 requireExactSemantics: !usedAdjustedModes, cancellationToken);
 
-            if (confirm is not null && !await confirm(settled))
+            var verificationFingerprint = CreateVerificationEnvironmentFingerprint(settled);
+            var verificationMatches = VerificationEnvironmentMatches(requested, verificationFingerprint);
+            if (requested.IsVerified && !verificationMatches)
+            {
+                requested.IsVerified = false;
+                requested.VerificationEnvironmentFingerprint = string.Empty;
+                requested.VerifiedAtUtc = null;
+            }
+            var shouldConfirm = confirm is not null &&
+                                (!confirmOnlyWhenVerificationChanged || !verificationMatches);
+            if (shouldConfirm && !await confirm!(settled))
             {
                 await RollbackAsync(emergencySnapshot, surroundWasManaged, CancellationToken.None);
                 if (trackInterruptedTransaction) _transactionStore.Complete();
@@ -132,6 +148,12 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
                 requireExactSemantics: true, cancellationToken);
 
             CopyLayout(committed, requested);
+            if (shouldConfirm)
+            {
+                requested.IsVerified = true;
+                requested.VerificationEnvironmentFingerprint = verificationFingerprint;
+                requested.VerifiedAtUtc = DateTime.UtcNow;
+            }
             if (trackInterruptedTransaction) _transactionStore.Complete();
             return new DisplayRestoreResult(usedAdjustedModes,
                 usedAdjustedModes
@@ -175,7 +197,7 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
             ? surround.Enabled ? NvidiaSurroundMode.RequireEnabled : NvidiaSurroundMode.RequireDisabled
             : NvidiaSurroundMode.Ignore;
         return await RestoreCoreAsync(snapshot, surroundMode, null, saveEmergencySnapshot: false,
-            trackInterruptedTransaction: true, cancellationToken);
+            trackInterruptedTransaction: true, confirmOnlyWhenVerificationChanged: false, cancellationToken);
     }
 
     public async Task<DisplayRestoreResult> RestoreInterruptedTransactionAsync(
@@ -188,7 +210,7 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
             ? surround.Enabled ? NvidiaSurroundMode.RequireEnabled : NvidiaSurroundMode.RequireDisabled
             : NvidiaSurroundMode.Ignore;
         var result = await RestoreCoreAsync(snapshot, surroundMode, null, saveEmergencySnapshot: false,
-            trackInterruptedTransaction: false, cancellationToken);
+            trackInterruptedTransaction: false, confirmOnlyWhenVerificationChanged: false, cancellationToken);
         _transactionStore.Complete();
         return result with { Message = "The display layout from before the interrupted operation was restored." };
     }
@@ -276,6 +298,129 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
             .Select(display => $"{display.Row},{display.Column},{display.DisplayId},{display.OverlapX},{display.OverlapY},{display.Rotation},{display.CloneGroup},{display.PixelShiftType}"));
         return $"{grid.Rows}x{grid.Columns}|{grid.ApplyWithBezelCorrection}|{grid.ImmersiveGaming}|{grid.BaseMosaic}|{grid.PixelShift}|" +
                $"{grid.PerDisplayWidth}x{grid.PerDisplayHeight}x{grid.BitsPerPixel}@{grid.RefreshRate}|{displays}";
+    }
+
+    private static string CreateVerificationEnvironmentFingerprint(DisplaySnapshot applied)
+    {
+        var components = new List<string>
+        {
+            "sherpa-display-verification-v1",
+            $"windows:{Environment.OSVersion.Version}",
+            $"architecture:{RuntimeInformation.OSArchitecture}",
+            $"structures:{Marshal.SizeOf<DisplayConfigPathInfo>()}:{Marshal.SizeOf<DisplayConfigModeInfo>()}"
+        };
+
+        try
+        {
+            var (paths, _) = QueryConfiguration(QdcAllPaths | GetAwarenessQueryFlags());
+            components.AddRange(paths
+                .Where(path => path.TargetInfo.TargetAvailable)
+                .Select(ConnectedTargetFingerprint)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(value => value, StringComparer.Ordinal)
+                .Select(value => "connected:" + value));
+        }
+        catch
+        {
+            // Applying a layout has already succeeded at this point. If Windows
+            // cannot enumerate inactive paths, the active layout still provides a
+            // stable safety fingerprint and switching must remain usable.
+            components.Add("connected-inventory:unavailable");
+        }
+
+        components.AddRange(GetDisplayDriverFingerprints().Select(value => "driver:" + value));
+        components.AddRange((applied.ActiveTargets ?? [])
+            .OrderBy(target => target.Identity, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(target => target.SourceX)
+            .ThenBy(target => target.SourceY)
+            .Select(target => "active:" + ActiveTargetFingerprint(target)));
+        components.Add("surround:" + SurroundEnvironmentFingerprint(applied.NvidiaSurround));
+
+        var bytes = Encoding.UTF8.GetBytes(string.Join('\n', components));
+        return Convert.ToHexString(SHA256.HashData(bytes));
+    }
+
+    private static bool VerificationEnvironmentMatches(DisplaySnapshot snapshot, string currentFingerprint) =>
+        snapshot.IsVerified &&
+        !string.IsNullOrWhiteSpace(snapshot.VerificationEnvironmentFingerprint) &&
+        snapshot.VerificationEnvironmentFingerprint.Equals(currentFingerprint, StringComparison.Ordinal);
+
+    private static string ConnectedTargetFingerprint(DisplayConfigPathInfo path)
+    {
+        var targetName = GetTargetDeviceName(path.TargetInfo.AdapterId, path.TargetInfo.Id);
+        var monitorIdentity = targetName?.MonitorDevicePath?.Trim().ToUpperInvariant();
+        var adapterIdentity = GetAdapterDevicePath(path.TargetInfo.AdapterId);
+        if (string.IsNullOrWhiteSpace(monitorIdentity))
+            monitorIdentity = $"{adapterIdentity}:{path.TargetInfo.Id}";
+        return $"{monitorIdentity}|{adapterIdentity}|{path.TargetInfo.OutputTechnology}|" +
+               $"{targetName?.ConnectorInstance ?? 0}";
+    }
+
+    private static string ActiveTargetFingerprint(DisplayTargetSnapshot target)
+    {
+        var adapterIdentity = GetAdapterDevicePath(new Luid
+        {
+            LowPart = target.AdapterLowPart,
+            HighPart = target.AdapterHighPart
+        });
+        var monitorIdentity = GetStableMonitorIdentity(target)?.ToUpperInvariant() ??
+                              target.Identity.Trim().ToUpperInvariant();
+        return $"{monitorIdentity}|{adapterIdentity}|{target.ConnectorInstance}|" +
+               $"{target.SourceX},{target.SourceY},{target.SourceWidth}x{target.SourceHeight},{target.PixelFormat}|" +
+               $"{target.Rotation},{target.Scaling},{target.RefreshNumerator}/{target.RefreshDenominator}|" +
+               $"{target.TargetActiveWidth}x{target.TargetActiveHeight}," +
+               $"{target.TargetVSyncNumerator}/{target.TargetVSyncDenominator},{target.BoostRefreshRate}";
+    }
+
+    private static string SurroundEnvironmentFingerprint(NvidiaSurroundSnapshot? surround)
+    {
+        if (surround is null) return "none";
+        var grids = string.Join("||", (surround.DisplayGrids ?? [])
+            .Select(DisplayGridFingerprint)
+            .OrderBy(value => value, StringComparer.Ordinal));
+        var cells = string.Join(";", (surround.GridCells ?? [])
+            .OrderBy(CellKey)
+            .Select(cell => $"{cell.TopologyIndex},{cell.Row},{cell.Column},{cell.GpuBusId}," +
+                            $"{cell.DisplayOutputId},{cell.OverlapX},{cell.OverlapY}"));
+        return $"{surround.ApiAvailable}|{surround.StatusKnown}|{surround.Enabled}|" +
+               $"{surround.HasConfiguredTopology}|{surround.IsPossible}|{surround.Topology}|" +
+               $"{surround.PerDisplayWidth}x{surround.PerDisplayHeight}@{surround.RefreshRateTimes1000}|" +
+               $"{surround.OverlapX},{surround.OverlapY}|{surround.GridMembershipVerified}|" +
+               $"{surround.GridTopologyCount}|{surround.FullGridCaptured}|{grids}|{cells}";
+    }
+
+    private static IReadOnlyList<string> GetDisplayDriverFingerprints()
+    {
+        var drivers = new List<string>();
+        try
+        {
+            using var machine = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+            using var displayClass = machine.OpenSubKey(
+                @"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}");
+            if (displayClass is null) return drivers;
+
+            foreach (var subKeyName in displayClass.GetSubKeyNames().OrderBy(value => value, StringComparer.Ordinal))
+            {
+                using var driver = displayClass.OpenSubKey(subKeyName);
+                if (driver is null) continue;
+                var values = new[]
+                {
+                    driver.GetValue("MatchingDeviceId") as string,
+                    driver.GetValue("DriverVersion") as string,
+                    driver.GetValue("DriverDate") as string,
+                    driver.GetValue("ProviderName") as string,
+                    driver.GetValue("DriverDesc") as string
+                };
+                if (values.All(string.IsNullOrWhiteSpace)) continue;
+                drivers.Add(string.Join('|', values.Select(value => value?.Trim().ToUpperInvariant() ?? string.Empty)));
+            }
+        }
+        catch
+        {
+            // The registry is supplementary. Monitor identities, adapter paths,
+            // Windows version, topology and Surround state remain in the hash.
+        }
+        return drivers.Distinct(StringComparer.Ordinal).OrderBy(value => value, StringComparer.Ordinal).ToList();
     }
 
     private async Task RollbackAsync(DisplaySnapshot emergencySnapshot, bool restoreSurround,
@@ -629,6 +774,8 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
         {
             SnapshotVersion = snapshot.SnapshotVersion,
             IsVerified = snapshot.IsVerified,
+            VerificationEnvironmentFingerprint = snapshot.VerificationEnvironmentFingerprint,
+            VerifiedAtUtc = snapshot.VerifiedAtUtc,
             CapturedAtUtc = snapshot.CapturedAtUtc,
             Summary = snapshot.Summary,
             QueryFlags = snapshot.QueryFlags,
@@ -922,6 +1069,23 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
         return DisplayConfigGetDeviceInfo(ref name) == 0 ? name : null;
     }
 
+    private static string GetAdapterDevicePath(Luid adapterId)
+    {
+        var name = new DisplayConfigAdapterName
+        {
+            Header = new DisplayConfigDeviceInfoHeader
+            {
+                Type = GetAdapterName,
+                Size = (uint)Marshal.SizeOf<DisplayConfigAdapterName>(),
+                AdapterId = adapterId
+            },
+            AdapterDevicePath = string.Empty
+        };
+        return DisplayConfigGetDeviceInfo(ref name) == 0 && !string.IsNullOrWhiteSpace(name.AdapterDevicePath)
+            ? name.AdapterDevicePath.Trim().ToUpperInvariant()
+            : $"{adapterId.HighPart:X8}:{adapterId.LowPart:X8}";
+    }
+
     private static (DisplayConfigPathInfo[] Paths, DisplayConfigModeInfo[] Modes) QueryConfiguration(uint flags)
     {
         for (var attempt = 0; attempt < 4; attempt++)
@@ -1104,6 +1268,9 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int DisplayConfigGetDeviceInfo(ref DisplayConfigTargetDeviceName requestPacket);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int DisplayConfigGetDeviceInfo(ref DisplayConfigAdapterName requestPacket);
+
     [StructLayout(LayoutKind.Sequential)]
     private struct Luid { public uint LowPart; public int HighPart; }
 
@@ -1236,5 +1403,12 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
         public uint ConnectorInstance;
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)] public string MonitorFriendlyDeviceName;
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string MonitorDevicePath;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct DisplayConfigAdapterName
+    {
+        public DisplayConfigDeviceInfoHeader Header;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string AdapterDevicePath;
     }
 }

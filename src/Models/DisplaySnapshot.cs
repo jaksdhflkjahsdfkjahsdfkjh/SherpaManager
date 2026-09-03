@@ -4,6 +4,8 @@ public sealed class DisplaySnapshot
 {
     public int SnapshotVersion { get; set; } = 3;
     public bool IsVerified { get; set; }
+    public string VerificationEnvironmentFingerprint { get; set; } = string.Empty;
+    public DateTime? VerifiedAtUtc { get; set; }
     public DateTime CapturedAtUtc { get; set; } = DateTime.UtcNow;
     public string Summary { get; set; } = string.Empty;
     public uint QueryFlags { get; set; }
