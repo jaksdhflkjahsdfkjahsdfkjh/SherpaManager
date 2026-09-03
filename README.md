@@ -69,7 +69,7 @@ The `build/` directory is intentionally ignored. Publish packaged binaries throu
 3. Disable Surround in NVIDIA Control Panel, choose the desired Windows **Show only on** work display, and capture **Work** again. Sherpa automatically selects **Require disabled** when the NVIDIA driver retains a configured topology.
 4. Test both directions and keep each confirmed layout.
 
-During activation Sherpa closes the old profile's applications first, validates and restores the saved NVIDIA grid (or disables Surround), applies and verifies the exact Windows monitor paths, and only then launches target applications. The NVIDIA change uses the current GPU topology and blocks any operation requiring a disruptive driver reload. If the saved displays are unavailable or NVAPI rejects the grid, Sherpa stops and restores the prior NVIDIA and Windows states instead of continuing blindly.
+During activation Sherpa first validates and restores the saved NVIDIA grid (or disables Surround), applies and verifies the exact Windows monitor paths, and only then closes the old profile's applications and launches the target applications. If an old-profile application cannot be closed, Sherpa restores the previous display layout and restarts applications already closed by that switch. The NVIDIA change uses the current GPU topology and blocks any operation requiring a disruptive driver reload. If the saved displays are unavailable or NVAPI rejects the grid, Sherpa stops and restores the prior NVIDIA and Windows states instead of continuing blindly.
 
 ## Configure applications
 

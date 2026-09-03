@@ -2,7 +2,7 @@ using SherpaManager.Models;
 
 namespace SherpaManager.Services;
 
-public sealed class ProfileActivationService(DisplayConfigurationService displays, IProcessService processes)
+public sealed class ProfileActivationService(IDisplayConfigurationService displays, IProcessService processes)
 {
     private readonly SemaphoreSlim _activationLock = new(1, 1);
 
@@ -24,18 +24,10 @@ public sealed class ProfileActivationService(DisplayConfigurationService display
             var warnings = new List<string>();
 
             var previous = document.Profiles.FirstOrDefault(profile => profile.Id == document.ActiveProfileId);
-            if (previous is not null && previous.Id != target.Id)
-            {
-                var closeResult = await ClosePreviousApplicationsAsync(previous, targetApps, report,
-                    cancellationToken);
-                warnings.AddRange(closeResult.Warnings);
-                if (!closeResult.CanContinue)
-                {
-                    report("The profile switch was cancelled because an application from the current profile is still running.");
-                    return false;
-                }
-            }
-
+            var previousApplicationsInitiallyRunning = previous is not null && previous.Id != target.Id
+                ? FindRunningPreviousApplications(previous, targetApps)
+                : [];
+            var displayApplied = false;
             if (target.Display is not null)
             {
                 report("Applying display layout…");
@@ -51,8 +43,35 @@ public sealed class ProfileActivationService(DisplayConfigurationService display
                     return false;
                 }
                 if (needsConfirmation) target.Display.IsVerified = true;
+                displayApplied = true;
             }
             else report("Keeping the current display layout.");
+
+            if (previous is not null && previous.Id != target.Id)
+            {
+                PreviousApplicationsCloseResult closeResult;
+                try
+                {
+                    closeResult = await ClosePreviousApplicationsAsync(previous, targetApps, report,
+                        cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    await CompensateFailedSwitchAsync(previous, previousApplicationsInitiallyRunning,
+                        displayApplied, report);
+                    throw;
+                }
+
+                warnings.AddRange(closeResult.Warnings);
+                if (!closeResult.CanContinue)
+                {
+                    report("The profile switch was cancelled because an application from the current profile is still running. Restoring the previous profile…");
+                    var applicationsToRestart = previousApplicationsInitiallyRunning
+                        .Concat(closeResult.ApplicationsToRestart).ToList();
+                    await CompensateFailedSwitchAsync(previous, applicationsToRestart, displayApplied, report);
+                    return false;
+                }
+            }
 
             var startedIdentities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var app in targetApps)
@@ -110,13 +129,39 @@ public sealed class ProfileActivationService(DisplayConfigurationService display
         finally { _activationLock.Release(); }
     }
 
+    private IReadOnlyCollection<LaunchApplication> FindRunningPreviousApplications(SwitchProfile previous,
+        IReadOnlyCollection<LaunchApplication> targetApps)
+    {
+        var targetIdentities = targetApps.Select(processes.GetIdentityKey)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var runningIdentities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var running = new List<LaunchApplication>();
+        foreach (var app in previous.Applications.Where(app => app.Enabled && app.CloseOnDeactivate))
+        {
+            try
+            {
+                var identity = processes.GetIdentityKey(app);
+                if (targetIdentities.Contains(identity) || !runningIdentities.Add(identity) ||
+                    !processes.IsRunning(app))
+                    continue;
+                running.Add(app);
+            }
+            catch
+            {
+                // CloseAsync will report malformed or inaccessible entries later.
+            }
+        }
+        return running;
+    }
+
     private async Task<PreviousApplicationsCloseResult> ClosePreviousApplicationsAsync(SwitchProfile previous, IReadOnlyCollection<LaunchApplication> targetApps,
         Action<string> report, CancellationToken cancellationToken)
     {
         var targetIdentities = targetApps.Select(processes.GetIdentityKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var scheduledIdentities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var closeTasks = new List<(LaunchApplication App, Task<ProcessCloseResult> Task)>();
+        var closeTasks = new List<(LaunchApplication App, bool WasRunning, Task<ProcessCloseResult> Task)>();
         var warnings = new List<string>();
+        var applicationsToRestart = new List<LaunchApplication>();
         var canContinue = true;
         foreach (var app in previous.Applications.Where(app => app.Enabled && app.CloseOnDeactivate))
         {
@@ -131,14 +176,33 @@ public sealed class ProfileActivationService(DisplayConfigurationService display
             }
 
             if (targetIdentities.Contains(previousIdentity) || !scheduledIdentities.Add(previousIdentity)) continue;
+            var wasRunning = false;
+            try { wasRunning = processes.IsRunning(app); }
+            catch
+            {
+                // CloseAsync still provides the authoritative result. Failure to
+                // inspect the initial state must not prevent a normal close attempt.
+            }
             report($"Closing {app.Name}…");
-            closeTasks.Add((app, processes.CloseAsync(app, cancellationToken)));
+            closeTasks.Add((app, wasRunning, processes.CloseAsync(app, cancellationToken)));
         }
 
         foreach (var closeTask in closeTasks)
         {
-            var closeResult = await closeTask.Task;
+            ProcessCloseResult closeResult;
+            try { closeResult = await closeTask.Task; }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception exception)
+            {
+                closeResult = new ProcessCloseResult(ProcessCloseStatus.MonitoringFailed, 0,
+                    $"Could not close {closeTask.App.Name}: {exception.Message}");
+            }
             report(closeResult.Message);
+            if ((closeTask.WasRunning || closeResult.MatchedCount > 0) &&
+                closeResult.Status is ProcessCloseStatus.ClosedGracefully
+                    or ProcessCloseStatus.ForcedClosed
+                    or ProcessCloseStatus.CloseScheduled)
+                applicationsToRestart.Add(closeTask.App);
             if (!closeResult.Succeeded)
             {
                 warnings.Add(closeResult.Message);
@@ -148,7 +212,66 @@ public sealed class ProfileActivationService(DisplayConfigurationService display
                     canContinue = false;
             }
         }
-        return new PreviousApplicationsCloseResult(warnings, canContinue);
+        return new PreviousApplicationsCloseResult(warnings, applicationsToRestart, canContinue);
+    }
+
+    private async Task CompensateFailedSwitchAsync(SwitchProfile previous,
+        IReadOnlyCollection<LaunchApplication> knownClosedApplications, bool displayApplied,
+        Action<string> report)
+    {
+        var recoveryFailures = new List<string>();
+        var previousApplications = previous.Applications
+            .Where(app => app.Enabled && app.CloseOnDeactivate)
+            .ToList();
+
+        // Stop delayed close observers before checking or relaunching anything.
+        // Otherwise a watcher from the abandoned switch could close a recovered app.
+        foreach (var app in previousApplications)
+        {
+            try { processes.CancelPendingClose(app); }
+            catch { /* Recovery continues for the remaining applications. */ }
+        }
+
+        if (displayApplied)
+        {
+            try
+            {
+                report("Restoring the previous display layout…");
+                var displayResult = await displays.RestoreLastRecoveryAsync(CancellationToken.None);
+                report(displayResult.Message);
+                if (!displayResult.Kept)
+                    recoveryFailures.Add("The previous display layout was not kept.");
+            }
+            catch (Exception exception)
+            {
+                recoveryFailures.Add($"The previous display layout could not be restored: {exception.Message}");
+            }
+        }
+
+        var restartIdentities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var app in knownClosedApplications)
+        {
+            try
+            {
+                var identity = processes.GetIdentityKey(app);
+                if (!restartIdentities.Add(identity) || processes.IsRunning(app)) continue;
+                report($"Restarting {app.Name}…");
+                var launchResult = await processes.LaunchAsync(app, CancellationToken.None);
+                report(launchResult.Message);
+                if (launchResult.HasWarning)
+                    recoveryFailures.Add(launchResult.Message);
+            }
+            catch (Exception exception)
+            {
+                recoveryFailures.Add($"Could not restart {app.Name}: {exception.Message}");
+            }
+        }
+
+        if (recoveryFailures.Count > 0)
+            throw new InvalidOperationException(
+                $"The profile switch stopped, but recovery was incomplete: {string.Join(" ", recoveryFailures)}");
+
+        report("The previous profile was restored.");
     }
 
     private static async Task ObserveMinimizationAsync(Task<bool> task)
@@ -160,5 +283,6 @@ public sealed class ProfileActivationService(DisplayConfigurationService display
 
     private sealed record PreviousApplicationsCloseResult(
         IReadOnlyCollection<string> Warnings,
+        IReadOnlyCollection<LaunchApplication> ApplicationsToRestart,
         bool CanContinue);
 }

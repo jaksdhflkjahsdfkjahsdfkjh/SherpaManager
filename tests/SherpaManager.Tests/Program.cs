@@ -25,6 +25,9 @@ internal static class Program
             ("Single-instance acknowledgement waits for completed activation", TestSingleInstanceDelayedAcknowledgementAsync),
             ("A rejected activation can hand ownership to a replacement instance", TestSingleInstanceShutdownHandoffAsync),
             ("Disabled destination app does not suppress closing", TestActivationClosingAsync),
+            ("Display layout is applied before old applications close", TestTransactionalActivationOrderingAsync),
+            ("Rejected display layout leaves old applications running", TestRejectedDisplayLeavesApplicationsAsync),
+            ("Failed application close restores the previous profile", TestFailedCloseRestoresPreviousProfileAsync),
             ("Duplicate launch identities start only once", TestDuplicateSuppressionAsync),
             ("Partial app launch remains a manageable active profile", TestPartialLaunchAsync),
             ("Invalid display snapshots fail before any NVIDIA action", TestDisplayPreflightAsync),
@@ -270,6 +273,98 @@ internal static class Program
             .ActivateAsync(document, target, _ => { });
         Assert(activated, "Activation should complete.");
         Assert(processes.Closed.Contains(previousApp.Id), "Disabled previous app was not closed.");
+    }
+
+    private static async Task TestTransactionalActivationOrderingAsync()
+    {
+        var processes = new FakeProcessService();
+        var displays = new FakeDisplayConfigurationService(processes.Events);
+        var previousApp = new LaunchApplication { Name = "Previous app", Path = "previous.exe" };
+        processes.RunningPaths.Add(previousApp.Path);
+        var previous = new SwitchProfile { Name = "Previous", Applications = [previousApp] };
+        var target = new SwitchProfile
+        {
+            Name = "Target",
+            Display = new DisplaySnapshot { IsVerified = true }
+        };
+        var document = new ProfileDocument { ActiveProfileId = previous.Id, Profiles = [previous, target] };
+
+        var activated = await new ProfileActivationService(displays, processes)
+            .ActivateAsync(document, target, _ => { });
+
+        Assert(activated, "Activation should complete.");
+        var displayIndex = processes.Events.IndexOf("display:apply");
+        var closeIndex = processes.Events.IndexOf("close:previous.exe");
+        Assert(displayIndex >= 0 && closeIndex > displayIndex,
+            "The previous application was closed before the target display layout was ready.");
+    }
+
+    private static async Task TestRejectedDisplayLeavesApplicationsAsync()
+    {
+        var processes = new FakeProcessService();
+        var displays = new FakeDisplayConfigurationService(processes.Events)
+        {
+            TargetResult = new DisplayRestoreResult(false, "reverted", Kept: false)
+        };
+        var previousApp = new LaunchApplication { Name = "Previous app", Path = "previous.exe" };
+        processes.RunningPaths.Add(previousApp.Path);
+        var previous = new SwitchProfile { Name = "Previous", Applications = [previousApp] };
+        var target = new SwitchProfile
+        {
+            Name = "Target",
+            Display = new DisplaySnapshot { IsVerified = true }
+        };
+        var document = new ProfileDocument { ActiveProfileId = previous.Id, Profiles = [previous, target] };
+
+        var activated = await new ProfileActivationService(displays, processes)
+            .ActivateAsync(document, target, _ => { });
+
+        Assert(!activated, "A reverted display layout must stop activation.");
+        Assert(processes.Closed.Count == 0, "An old-profile application was closed after display rejection.");
+        Assert(processes.RunningPaths.Contains(previousApp.Path), "The old-profile application did not remain running.");
+        Assert(document.ActiveProfileId == previous.Id, "The rejected target was recorded as active.");
+    }
+
+    private static async Task TestFailedCloseRestoresPreviousProfileAsync()
+    {
+        var processes = new FakeProcessService();
+        var displays = new FakeDisplayConfigurationService(processes.Events);
+        var closedApp = new LaunchApplication { Name = "Closed app", Path = "closed.exe" };
+        var stubbornApp = new LaunchApplication { Name = "Stubborn app", Path = "stubborn.exe" };
+        processes.RunningPaths.Add(closedApp.Path);
+        processes.RunningPaths.Add(stubbornApp.Path);
+        processes.CloseResultsByPath[closedApp.Path] =
+            new ProcessCloseResult(ProcessCloseStatus.ClosedGracefully, 1, "closed");
+        processes.CloseResultsByPath[stubbornApp.Path] =
+            new ProcessCloseResult(ProcessCloseStatus.StillRunning, 1, "still running");
+        var previous = new SwitchProfile
+        {
+            Name = "Previous",
+            Applications = [closedApp, stubbornApp]
+        };
+        var targetApp = new LaunchApplication { Name = "Target app", Path = "target.exe" };
+        var target = new SwitchProfile
+        {
+            Name = "Target",
+            Display = new DisplaySnapshot { IsVerified = true },
+            Applications = [targetApp]
+        };
+        var document = new ProfileDocument { ActiveProfileId = previous.Id, Profiles = [previous, target] };
+
+        var activated = await new ProfileActivationService(displays, processes)
+            .ActivateAsync(document, target, _ => { });
+
+        Assert(!activated, "Activation should stop when an old-profile application cannot be closed.");
+        Assert(displays.RecoveryRestoreCalls == 1, "The previous display layout was not restored.");
+        Assert(processes.Launched.Contains(closedApp.Id), "The successfully closed old-profile app was not restarted.");
+        Assert(!processes.Launched.Contains(targetApp.Id), "A target app started after the transaction failed.");
+        Assert(processes.RunningPaths.Contains(closedApp.Path) && processes.RunningPaths.Contains(stubbornApp.Path),
+            "The previous application state was not recovered.");
+        Assert(document.ActiveProfileId == previous.Id, "The failed target was recorded as active.");
+        var rollbackIndex = processes.Events.IndexOf("display:rollback");
+        var restartIndex = processes.Events.IndexOf("launch:closed.exe");
+        Assert(rollbackIndex >= 0 && restartIndex > rollbackIndex,
+            "The old application was restarted before its display layout was restored.");
     }
 
     private static async Task TestDuplicateSuppressionAsync()
@@ -1039,9 +1134,13 @@ internal static class Program
 
     private sealed class FakeProcessService : IProcessService
     {
+        public List<string> Events { get; } = [];
         public List<Guid> Closed { get; } = [];
         public List<Guid> Forced { get; } = [];
         public List<Guid> Launched { get; } = [];
+        public HashSet<string> RunningPaths { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, ProcessCloseResult> CloseResultsByPath { get; } =
+            new(StringComparer.OrdinalIgnoreCase);
         public ProcessCloseResult CloseResult { get; set; } =
             new(ProcessCloseStatus.ClosedGracefully, 1, "closed");
         public string? ThrowOnLaunchPath { get; set; }
@@ -1052,24 +1151,62 @@ internal static class Program
         public string GetIdentityKey(LaunchApplication app) => Resolve(app).IdentityKey;
         public void CancelPendingClose(LaunchApplication app) { }
         public bool IsPendingCloseOutcomeCurrent(PendingProcessCloseOutcome outcome) => true;
-        public bool IsRunning(LaunchApplication app) => false;
+        public bool IsRunning(LaunchApplication app) => RunningPaths.Contains(app.Path);
         public Task<ProcessLaunchResult> LaunchAsync(LaunchApplication app, CancellationToken cancellationToken)
         {
             if (app.Path.Equals(ThrowOnLaunchPath, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("simulated launch failure");
+            Events.Add("launch:" + app.Path);
             Launched.Add(app.Id);
+            RunningPaths.Add(app.Path);
             return Task.FromResult(new ProcessLaunchResult(true, app.StartMinimized, "started"));
         }
         public Task<bool> MinimizeAsync(LaunchApplication app, TimeSpan timeout, CancellationToken cancellationToken) => Task.FromResult(true);
         public Task<ProcessCloseResult> CloseAsync(LaunchApplication app, CancellationToken cancellationToken)
         {
+            Events.Add("close:" + app.Path);
             Closed.Add(app.Id);
-            return Task.FromResult(CloseResult);
+            var result = CloseResultsByPath.GetValueOrDefault(app.Path, CloseResult);
+            if (result.Succeeded && result.Status != ProcessCloseStatus.Superseded)
+                RunningPaths.Remove(app.Path);
+            return Task.FromResult(result);
         }
         public Task<ProcessCloseResult> ForceCloseAsync(LaunchApplication app, CancellationToken cancellationToken)
         {
             Forced.Add(app.Id);
             return Task.FromResult(new ProcessCloseResult(ProcessCloseStatus.ForcedClosed, 1, "force-closed"));
+        }
+    }
+
+    private sealed class FakeDisplayConfigurationService(List<string> events) : IDisplayConfigurationService
+    {
+        public DisplayRestoreResult TargetResult { get; set; } =
+            new(false, "display applied");
+        public DisplayRestoreResult RecoveryResult { get; set; } =
+            new(false, "display restored");
+        public int RecoveryRestoreCalls { get; private set; }
+
+        public Task<DisplayRestoreResult> RestoreAsync(DisplaySnapshot snapshot,
+            NvidiaSurroundMode surroundMode, CancellationToken cancellationToken = default)
+        {
+            events.Add("display:apply");
+            return Task.FromResult(TargetResult);
+        }
+
+        public async Task<DisplayRestoreResult> RestoreAsync(DisplaySnapshot snapshot,
+            NvidiaSurroundMode surroundMode, Func<DisplaySnapshot, Task<bool>> confirm,
+            CancellationToken cancellationToken = default)
+        {
+            events.Add("display:apply");
+            return await confirm(snapshot) ? TargetResult : new DisplayRestoreResult(false, "reverted", Kept: false);
+        }
+
+        public Task<DisplayRestoreResult> RestoreLastRecoveryAsync(
+            CancellationToken cancellationToken = default)
+        {
+            RecoveryRestoreCalls++;
+            events.Add("display:rollback");
+            return Task.FromResult(RecoveryResult);
         }
     }
 

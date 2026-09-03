@@ -5,7 +5,7 @@ using Forms = System.Windows.Forms;
 
 namespace SherpaManager.Services;
 
-public sealed class DisplayConfigurationService : IDisposable
+public sealed class DisplayConfigurationService : IDisplayConfigurationService, IDisposable
 {
     private const uint QdcAllPaths = 0x00000001;
     private const uint QdcOnlyActivePaths = 0x00000002;
