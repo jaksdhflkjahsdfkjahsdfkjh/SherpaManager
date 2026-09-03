@@ -13,6 +13,11 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
         if (!await _activationLock.WaitAsync(0, cancellationToken))
             throw new InvalidOperationException("Another profile switch is already in progress.");
 
+        SwitchProfile? previous = null;
+        IReadOnlyCollection<LaunchApplication> previousApplicationsInitiallyRunning = [];
+        var startedTargetApplications = new List<LaunchApplication>();
+        var displayApplied = false;
+        var applicationTransitionStarted = false;
         try
         {
             var targetApps = target.Applications.Where(app => app.Enabled).ToList();
@@ -23,11 +28,10 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
             foreach (var app in targetApps) processes.CancelPendingClose(app);
             var warnings = new List<string>();
 
-            var previous = document.Profiles.FirstOrDefault(profile => profile.Id == document.ActiveProfileId);
-            var previousApplicationsInitiallyRunning = previous is not null && previous.Id != target.Id
+            previous = document.Profiles.FirstOrDefault(profile => profile.Id == document.ActiveProfileId);
+            previousApplicationsInitiallyRunning = previous is not null && previous.Id != target.Id
                 ? FindRunningPreviousApplications(previous, targetApps)
                 : [];
-            var displayApplied = false;
             if (target.Display is not null)
             {
                 report("Applying display layout…");
@@ -49,18 +53,9 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
 
             if (previous is not null && previous.Id != target.Id)
             {
-                PreviousApplicationsCloseResult closeResult;
-                try
-                {
-                    closeResult = await ClosePreviousApplicationsAsync(previous, targetApps, report,
-                        cancellationToken);
-                }
-                catch (OperationCanceledException)
-                {
-                    await CompensateFailedSwitchAsync(previous, previousApplicationsInitiallyRunning,
-                        displayApplied, report);
-                    throw;
-                }
+                applicationTransitionStarted = true;
+                var closeResult = await ClosePreviousApplicationsAsync(previous, targetApps, report,
+                    cancellationToken);
 
                 warnings.AddRange(closeResult.Warnings);
                 if (!closeResult.CanContinue)
@@ -68,11 +63,12 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
                     report("The profile switch was cancelled because an application from the current profile is still running. Restoring the previous profile…");
                     var applicationsToRestart = previousApplicationsInitiallyRunning
                         .Concat(closeResult.ApplicationsToRestart).ToList();
-                    await CompensateFailedSwitchAsync(previous, applicationsToRestart, displayApplied, report);
+                    await CompensateFailedSwitchAsync(previous, applicationsToRestart, [], displayApplied, report);
                     return false;
                 }
             }
 
+            applicationTransitionStarted = true;
             var startedIdentities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var app in targetApps)
             {
@@ -106,6 +102,7 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
                     report($"Starting {app.Name}…");
                     var launchResult = await processes.LaunchAsync(app, cancellationToken);
                     report(launchResult.Message);
+                    if (launchResult.Started) startedTargetApplications.Add(app);
                     if (launchResult.HasWarning ||
                         (app.StartMinimized && !launchResult.Minimized && !launchResult.MinimizationPending))
                         warnings.Add(launchResult.Message);
@@ -125,6 +122,14 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
                 ? $"{target.Name} is ready."
                 : $"{target.Name} is active with {warnings.Count} warning{(warnings.Count == 1 ? string.Empty : "s")}: {string.Join(" ", warnings)}");
             return true;
+        }
+        catch (OperationCanceledException)
+        {
+            if (applicationTransitionStarted)
+                await CompensateFailedSwitchAsync(previous, previousApplicationsInitiallyRunning,
+                    startedTargetApplications, displayApplied, report);
+            report("Profile switch cancelled; the previous state was restored.");
+            throw;
         }
         finally { _activationLock.Release(); }
     }
@@ -215,14 +220,33 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
         return new PreviousApplicationsCloseResult(warnings, applicationsToRestart, canContinue);
     }
 
-    private async Task CompensateFailedSwitchAsync(SwitchProfile previous,
-        IReadOnlyCollection<LaunchApplication> knownClosedApplications, bool displayApplied,
+    private async Task CompensateFailedSwitchAsync(SwitchProfile? previous,
+        IReadOnlyCollection<LaunchApplication> knownClosedApplications,
+        IReadOnlyCollection<LaunchApplication> startedTargetApplications, bool displayApplied,
         Action<string> report)
     {
         var recoveryFailures = new List<string>();
-        var previousApplications = previous.Applications
+        var previousApplications = (previous?.Applications ?? [])
             .Where(app => app.Enabled && app.CloseOnDeactivate)
             .ToList();
+
+        foreach (var app in startedTargetApplications.Reverse())
+        {
+            try
+            {
+                processes.CancelPendingClose(app);
+                if (!processes.IsRunning(app)) continue;
+                report($"Closing {app.Name} from the cancelled profile…");
+                var closeResult = await processes.CloseAsync(app, CancellationToken.None);
+                report(closeResult.Message);
+                if (!closeResult.Succeeded)
+                    recoveryFailures.Add(closeResult.Message);
+            }
+            catch (Exception exception)
+            {
+                recoveryFailures.Add($"Could not close {app.Name} from the cancelled profile: {exception.Message}");
+            }
+        }
 
         // Stop delayed close observers before checking or relaunching anything.
         // Otherwise a watcher from the abandoned switch could close a recovered app.
@@ -271,7 +295,7 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
             throw new InvalidOperationException(
                 $"The profile switch stopped, but recovery was incomplete: {string.Join(" ", recoveryFailures)}");
 
-        report("The previous profile was restored.");
+        report("The previous state was restored.");
     }
 
     private static async Task ObserveMinimizationAsync(Task<bool> task)

@@ -28,6 +28,7 @@ internal static class Program
             ("Display layout is applied before old applications close", TestTransactionalActivationOrderingAsync),
             ("Rejected display layout leaves old applications running", TestRejectedDisplayLeavesApplicationsAsync),
             ("Failed application close restores the previous profile", TestFailedCloseRestoresPreviousProfileAsync),
+            ("Cancelled application launch restores the previous profile", TestCancelledLaunchRestoresPreviousProfileAsync),
             ("Duplicate launch identities start only once", TestDuplicateSuppressionAsync),
             ("Partial app launch remains a manageable active profile", TestPartialLaunchAsync),
             ("Invalid display snapshots fail before any NVIDIA action", TestDisplayPreflightAsync),
@@ -365,6 +366,49 @@ internal static class Program
         var restartIndex = processes.Events.IndexOf("launch:closed.exe");
         Assert(rollbackIndex >= 0 && restartIndex > rollbackIndex,
             "The old application was restarted before its display layout was restored.");
+    }
+
+    private static async Task TestCancelledLaunchRestoresPreviousProfileAsync()
+    {
+        var processes = new FakeProcessService();
+        var displays = new FakeDisplayConfigurationService(processes.Events);
+        var previousApp = new LaunchApplication { Name = "Previous app", Path = "previous.exe" };
+        processes.RunningPaths.Add(previousApp.Path);
+        var previous = new SwitchProfile { Name = "Previous", Applications = [previousApp] };
+        var startedTargetApp = new LaunchApplication { Name = "Started target", Path = "target-started.exe" };
+        var delayedTargetApp = new LaunchApplication
+        {
+            Name = "Delayed target",
+            Path = "target-delayed.exe",
+            LaunchDelayMs = LaunchApplication.MaximumLaunchDelayMs
+        };
+        var target = new SwitchProfile
+        {
+            Name = "Target",
+            Display = new DisplaySnapshot { IsVerified = true },
+            Applications = [startedTargetApp, delayedTargetApp]
+        };
+        var document = new ProfileDocument { ActiveProfileId = previous.Id, Profiles = [previous, target] };
+        using var cancellation = new CancellationTokenSource();
+
+        var activation = new ProfileActivationService(displays, processes)
+            .ActivateAsync(document, target, _ => { }, cancellationToken: cancellation.Token);
+        var launchDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(2);
+        while (!processes.Launched.Contains(startedTargetApp.Id) && DateTime.UtcNow < launchDeadline)
+            await Task.Delay(10);
+        Assert(processes.Launched.Contains(startedTargetApp.Id), "The first target app did not start before cancellation.");
+        cancellation.Cancel();
+
+        var cancelled = false;
+        try { await activation; }
+        catch (OperationCanceledException) { cancelled = true; }
+
+        Assert(cancelled, "The cancelled activation did not report cancellation.");
+        Assert(displays.RecoveryRestoreCalls == 1, "Cancellation did not restore the previous display layout.");
+        Assert(processes.Closed.Contains(startedTargetApp.Id), "The target app started by the cancelled switch was not closed.");
+        Assert(!processes.RunningPaths.Contains(startedTargetApp.Path), "The cancelled target app is still running.");
+        Assert(processes.RunningPaths.Contains(previousApp.Path), "The previous app was not restarted after cancellation.");
+        Assert(document.ActiveProfileId == previous.Id, "The cancelled target was recorded as active.");
     }
 
     private static async Task TestDuplicateSuppressionAsync()

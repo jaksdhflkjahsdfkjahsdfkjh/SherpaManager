@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     private readonly HashSet<string> _inFlightTargetIdentities = new(StringComparer.OrdinalIgnoreCase);
     private readonly Queue<PendingProcessCloseOutcome> _pendingCloseOutcomes = [];
     private ProfileDocument _document = new();
+    private CancellationTokenSource? _busyOperationCancellation;
     private bool _isBusy;
     private bool _allowClose;
     private bool _allowBusyClose;
@@ -122,11 +123,12 @@ public partial class MainWindow : Window
             try { _inFlightTargetIdentities.Add(_processes.GetIdentityKey(app)); }
             catch { /* Activation validation reports malformed entries to the user. */ }
         }
-        SetBusy(true, $"Switching to {profile.Name}…");
+        var cancellationToken = BeginBusyOperation($"Switching to {profile.Name}…");
         try
         {
             var activated = await _activator.ActivateAsync(_document, profile,
-                message => Dispatcher.Invoke(() => StatusText.Text = message), ConfirmDisplayAsync);
+                message => Dispatcher.Invoke(() => ReportBusyStatus(message)), ConfirmDisplayAsync,
+                cancellationToken);
             EnsureWindowIsVisible();
             if (activated)
             {
@@ -135,11 +137,17 @@ public partial class MainWindow : Window
             }
             await SaveAsync();
         }
+        catch (OperationCanceledException)
+        {
+            EnsureWindowIsVisible();
+            StatusText.Text = "Profile switch cancelled; the previous state was restored.";
+            await SaveAsync();
+        }
         catch (Exception ex) { ShowError($"Could not activate {profile.Name}", ex); }
         finally
         {
             _inFlightTargetIdentities.Clear();
-            SetBusy(false);
+            EndBusyOperation();
         }
     }
 
@@ -178,10 +186,11 @@ public partial class MainWindow : Window
     private async void TestDisplay_Click(object sender, RoutedEventArgs e)
     {
         if (SelectedProfile is not { Display: { } snapshot } profile || _isBusy) return;
-        SetBusy(true, $"Testing {profile.Name} display layout…");
+        var cancellationToken = BeginBusyOperation($"Testing {profile.Name} display layout…");
         try
         {
-            var result = await _displays.RestoreAsync(snapshot, profile.NvidiaSurroundMode, ConfirmDisplayAsync);
+            var result = await _displays.RestoreAsync(snapshot, profile.NvidiaSurroundMode,
+                ConfirmDisplayAsync, cancellationToken);
             EnsureWindowIsVisible();
             StatusText.Text = result.Message;
             if (result.Kept)
@@ -192,8 +201,13 @@ public partial class MainWindow : Window
             else StatusText.Text = "Reverted to the previous display layout without saving the test layout.";
             await SaveAsync();
         }
+        catch (OperationCanceledException)
+        {
+            EnsureWindowIsVisible();
+            StatusText.Text = "Display test cancelled; the previous layout was restored.";
+        }
         catch (Exception ex) { ShowError("Could not test the display layout", ex); }
-        finally { SetBusy(false); }
+        finally { EndBusyOperation(); }
     }
 
     private async void RestoreLastDisplay_Click(object sender, RoutedEventArgs e)
@@ -203,15 +217,20 @@ public partial class MainWindow : Window
             StatusText.Text = "No previous display recovery snapshot is available.";
             return;
         }
-        SetBusy(true, "Restoring the previous display layout…");
+        var cancellationToken = BeginBusyOperation("Restoring the previous display layout…");
         try
         {
-            var result = await _displays.RestoreLastRecoveryAsync();
+            var result = await _displays.RestoreLastRecoveryAsync(cancellationToken);
             EnsureWindowIsVisible();
             StatusText.Text = result.Message;
         }
+        catch (OperationCanceledException)
+        {
+            EnsureWindowIsVisible();
+            StatusText.Text = "Display restore cancelled; the layout from before this operation was restored.";
+        }
         catch (Exception ex) { ShowError("Could not restore the previous display layout", ex); }
-        finally { SetBusy(false); }
+        finally { EndBusyOperation(); }
     }
 
     private Task<bool> ConfirmDisplayAsync(DisplaySnapshot snapshot)
@@ -520,15 +539,20 @@ public partial class MainWindow : Window
     {
         ShowFromTray();
         if (_isBusy) return;
-        SetBusy(true, "Restoring the previous display layout…");
+        var cancellationToken = BeginBusyOperation("Restoring the previous display layout…");
         try
         {
-            var result = await _displays.RestoreLastRecoveryAsync();
+            var result = await _displays.RestoreLastRecoveryAsync(cancellationToken);
             EnsureWindowIsVisible();
             StatusText.Text = result.Message;
         }
+        catch (OperationCanceledException)
+        {
+            EnsureWindowIsVisible();
+            StatusText.Text = "Display restore cancelled; the layout from before this operation was restored.";
+        }
         catch (Exception ex) { ShowError("Could not restore the previous display layout", ex); }
-        finally { SetBusy(false); }
+        finally { EndBusyOperation(); }
     }
 
     public void RestoreAndActivate() => TryRestoreAndActivate();
@@ -765,13 +789,52 @@ public partial class MainWindow : Window
         }
     }
 
+    private CancellationToken BeginBusyOperation(string message)
+    {
+        _busyOperationCancellation?.Dispose();
+        _busyOperationCancellation = new CancellationTokenSource();
+        SetBusy(true, message);
+        return _busyOperationCancellation.Token;
+    }
+
+    private void EndBusyOperation()
+    {
+        SetBusy(false);
+        _busyOperationCancellation?.Dispose();
+        _busyOperationCancellation = null;
+    }
+
+    private void CancelBusyOperation_Click(object sender, RoutedEventArgs e) => RequestBusyCancellation();
+
+    private void RequestBusyCancellation()
+    {
+        if (_busyOperationCancellation is not { IsCancellationRequested: false } cancellation) return;
+        cancellation.Cancel();
+        BusyCancelButton.IsEnabled = false;
+        ReportBusyStatus("Cancelling… Sherpa is restoring the previous state.");
+    }
+
+    private void Window_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (!_isBusy || e.Key != Key.Escape) return;
+        RequestBusyCancellation();
+        e.Handled = true;
+    }
+
+    private void ReportBusyStatus(string message)
+    {
+        StatusText.Text = message;
+        BusyOperationText.Text = message;
+    }
+
     private void SetBusy(bool busy, string? message = null)
     {
         _isBusy = busy;
         BusyOverlay.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         BusyProgress.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         ActivateButton.IsEnabled = !busy;
-        if (message is not null) StatusText.Text = message;
+        BusyCancelButton.IsEnabled = busy;
+        if (message is not null) ReportBusyStatus(message);
         if (!busy && _pendingCloseOutcomes.Count > 0 && !_resourcesDisposed)
             Dispatcher.BeginInvoke(() => _ = DrainPendingCloseOutcomesAsync());
     }

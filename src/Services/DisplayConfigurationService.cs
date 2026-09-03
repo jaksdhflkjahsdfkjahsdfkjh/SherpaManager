@@ -132,16 +132,19 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
         catch (Exception failure)
         {
             var rollbackMessage = "Automatic rollback failed; use Win+P or Windows Display Settings to recover.";
+            var rollbackSucceeded = false;
             try
             {
                 await RollbackAsync(emergencySnapshot, surroundWasManaged, CancellationToken.None);
                 rollbackMessage = "The previous display layout was restored and verified automatically.";
+                rollbackSucceeded = true;
             }
             catch (Exception rollbackFailure)
             {
                 rollbackMessage = $"Automatic rollback also failed: {rollbackFailure.Message} Use Win+P or Windows Display Settings to recover.";
             }
 
+            if (failure is OperationCanceledException && rollbackSucceeded) throw;
             throw new InvalidOperationException($"{failure.Message} {rollbackMessage}", failure);
         }
     }

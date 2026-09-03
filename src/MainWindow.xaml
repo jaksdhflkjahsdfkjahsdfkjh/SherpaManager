@@ -4,7 +4,8 @@
         Title="Sherpa Manager" Width="1180" Height="860" MinWidth="1000" MinHeight="820"
         Icon="Assets/SherpaManager.ico"
         Background="{StaticResource WindowBrush}" WindowStartupLocation="CenterScreen"
-        Closing="Window_Closing" StateChanged="Window_StateChanged">
+        Closing="Window_Closing" StateChanged="Window_StateChanged"
+        PreviewKeyDown="Window_PreviewKeyDown">
     <Grid Background="{StaticResource WindowBrush}">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="276"/>
@@ -282,7 +283,27 @@
                 </TabItem>
             </TabControl>
 
-            <Border x:Name="BusyOverlay" Background="#70131218" Visibility="Collapsed" Panel.ZIndex="5"/>
+            <Border x:Name="BusyOverlay" Background="#B0131218" Visibility="Collapsed" Panel.ZIndex="5">
+                <Border Width="390" Padding="26" HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}"
+                        BorderThickness="1" CornerRadius="12">
+                    <StackPanel>
+                        <ProgressBar IsIndeterminate="True" Height="4" Margin="0,0,0,18"
+                                     Foreground="{StaticResource AccentBrush}" Background="{StaticResource Surface2Brush}"/>
+                        <TextBlock Text="Working on your profile" FontSize="18" FontWeight="SemiBold"
+                                   HorizontalAlignment="Center"/>
+                        <TextBlock x:Name="BusyOperationText" Text="Please wait…" Margin="0,9,0,20"
+                                   Foreground="{StaticResource MutedTextBrush}" TextAlignment="Center"
+                                   TextWrapping="Wrap"/>
+                        <Button x:Name="BusyCancelButton" Content="Cancel" Click="CancelBusyOperation_Click"
+                                HorizontalAlignment="Center" MinWidth="120"
+                                ToolTip="Cancel this operation and restore the previous state"
+                                AutomationProperties.Name="Cancel current operation"/>
+                        <TextBlock Text="You can also press Esc" Margin="0,10,0,0" FontSize="11"
+                                   Foreground="{StaticResource MutedTextBrush}" HorizontalAlignment="Center"/>
+                    </StackPanel>
+                </Border>
+            </Border>
         </Grid>
     </Grid>
 </Window>
