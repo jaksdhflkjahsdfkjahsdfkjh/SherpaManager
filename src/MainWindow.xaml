@@ -241,6 +241,7 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
                         <StackPanel Margin="0,0,0,25">
@@ -262,7 +263,7 @@
                         </Border>
 
                         <Border Grid.Row="2" Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}"
-                                BorderThickness="1" CornerRadius="10" Padding="20">
+                                BorderThickness="1" CornerRadius="10" Padding="20" Margin="0,0,0,18">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
@@ -277,6 +278,25 @@
                                 </StackPanel>
                                 <Button Grid.Column="1" Content="Open profile file" Click="OpenProfileFile_Click"
                                         VerticalAlignment="Center" Margin="24,0,0,0"/>
+                            </Grid>
+                        </Border>
+
+                        <Border Grid.Row="3" Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="1" CornerRadius="10" Padding="20">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="DIAGNOSTICS" FontSize="11" FontWeight="SemiBold"
+                                               Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,8"/>
+                                    <TextBlock Text="Copy a redacted system, display, and recent activity report."
+                                               Foreground="{StaticResource MutedTextBrush}" FontSize="11"/>
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Copy diagnostics" Click="CopyDiagnostics_Click"
+                                        VerticalAlignment="Center" Margin="24,0,0,0"
+                                        ToolTip="Paths and command-line arguments are redacted"/>
                             </Grid>
                         </Border>
                     </Grid>

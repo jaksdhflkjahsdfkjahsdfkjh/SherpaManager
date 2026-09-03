@@ -27,6 +27,7 @@ public sealed class NvidiaSurroundService : INvidiaSurroundService, IDisposable
     private const int MaxTopologiesPerGroup = 2;
     private const int MaxMosaicDisplays = 64;
     private const int MaxNvApiDisplays = 128;
+    private readonly IDiagnosticLog _diagnostics;
 
     private readonly object _sync = new();
     private bool _initialized;
@@ -40,6 +41,10 @@ public sealed class NvidiaSurroundService : INvidiaSurroundService, IDisposable
     private ValidateDisplayGridsDelegate? _validateDisplayGrids;
     private SetDisplayGridsDelegate? _setDisplayGrids;
     private UnloadDelegate? _unload;
+    private string? _lastDiagnosticStatus;
+
+    public NvidiaSurroundService(IDiagnosticLog? diagnostics = null) =>
+        _diagnostics = diagnostics ?? NullDiagnosticLog.Instance;
 
     public NvidiaSurroundSnapshot GetStatus()
     {
@@ -47,7 +52,10 @@ public sealed class NvidiaSurroundService : INvidiaSurroundService, IDisposable
         {
             EnsureInitialized();
             if (_getCurrentTopology is null)
-                return new NvidiaSurroundSnapshot { Description = _initializationError ?? "NVIDIA NVAPI is unavailable." };
+                return RecordStatus(new NvidiaSurroundSnapshot
+                {
+                    Description = _initializationError ?? "NVIDIA NVAPI is unavailable."
+                });
 
             var topology = new MosaicTopologyBrief { Version = MakeVersion<MosaicTopologyBrief>(1) };
             var setting = new MosaicDisplaySetting { Version = MakeVersion<MosaicDisplaySetting>(2) };
@@ -67,12 +75,12 @@ public sealed class NvidiaSurroundService : INvidiaSurroundService, IDisposable
             }
             else if (result != NvApiOk)
             {
-                return new NvidiaSurroundSnapshot
+                return RecordStatus(new NvidiaSurroundSnapshot
                 {
                     ApiAvailable = true,
                     StatusKnown = false,
                     Description = $"NVIDIA Surround status is unavailable (NVAPI {result})."
-                };
+                }, result);
             }
 
             var refreshRateTimes1000 = setting.RefreshRateTimes1000 > 0
@@ -131,7 +139,7 @@ public sealed class NvidiaSurroundService : INvidiaSurroundService, IDisposable
             {
                 snapshot.GridMembershipVerified = true;
                 snapshot.Description = "NVIDIA Surround: not configured.";
-                return snapshot;
+                return RecordStatus(snapshot);
             }
 
             if (topology.Topology != 0 &&
@@ -150,7 +158,7 @@ public sealed class NvidiaSurroundService : INvidiaSurroundService, IDisposable
                     snapshot.Description =
                         $"NVIDIA Surround is enabled, but its complete grid could not be captured ({gridFailure}). " +
                         "Sherpa will not switch this profile until Capture current can read panel order, bezels, and resolution.";
-                    return snapshot;
+                    return RecordStatus(snapshot);
                 }
             }
 
@@ -164,7 +172,7 @@ public sealed class NvidiaSurroundService : INvidiaSurroundService, IDisposable
                 : $"NVIDIA Surround: {topologyName}, {snapshot.PerDisplayWidth}×{snapshot.PerDisplayHeight} per panel at {refresh}, disabled. Capture the sim profile while Surround is enabled to save its complete grid.";
             if (!snapshot.IsPossible)
                 snapshot.Description += " The saved legacy topology is not currently possible.";
-            return snapshot;
+            return RecordStatus(snapshot);
         }
     }
 
@@ -173,6 +181,12 @@ public sealed class NvidiaSurroundService : INvidiaSurroundService, IDisposable
         ArgumentNullException.ThrowIfNull(snapshot);
         lock (_sync)
         {
+            _diagnostics.Write("info", "nvidia.apply.started", data: new Dictionary<string, object?>
+            {
+                ["enabled"] = enabled,
+                ["gridCount"] = snapshot.DisplayGrids?.Count ?? 0,
+                ["fullGridCaptured"] = snapshot.FullGridCaptured
+            });
             var current = GetStatus();
             if (!current.ApiAvailable)
                 throw new InvalidOperationException(current.Description);
@@ -186,6 +200,8 @@ public sealed class NvidiaSurroundService : INvidiaSurroundService, IDisposable
                 if (_enableCurrentTopology is null)
                     throw new InvalidOperationException("This NVIDIA driver does not expose Surround disabling through NVAPI.");
                 var disableResult = _enableCurrentTopology(0);
+                _diagnostics.Write(disableResult == NvApiOk ? "info" : "error", "nvidia.disable.completed",
+                    data: new Dictionary<string, object?> { ["nvapiCode"] = disableResult });
                 if (disableResult != NvApiOk)
                     throw new InvalidOperationException($"NVIDIA could not disable Surround (NVAPI {disableResult}). No Windows display changes were applied.");
                 return;
@@ -201,19 +217,50 @@ public sealed class NvidiaSurroundService : INvidiaSurroundService, IDisposable
 
             ValidateManagedGrids(snapshot.DisplayGrids);
             ApplyDisplayGrids(snapshot.DisplayGrids);
+            _diagnostics.Write("info", "nvidia.apply.completed", data: new Dictionary<string, object?>
+            {
+                ["enabled"] = true,
+                ["gridCount"] = snapshot.DisplayGrids.Count
+            });
         }
+    }
+
+    private NvidiaSurroundSnapshot RecordStatus(NvidiaSurroundSnapshot status, int? nvApiCode = null)
+    {
+        var fingerprint = $"{status.ApiAvailable}|{status.StatusKnown}|{status.Enabled}|" +
+                          $"{status.HasConfiguredTopology}|{status.Topology}|{status.FullGridCaptured}|" +
+                          $"{status.DisplayGrids?.Count ?? 0}|{nvApiCode}";
+        if (fingerprint == _lastDiagnosticStatus) return status;
+        _lastDiagnosticStatus = fingerprint;
+        var data = new Dictionary<string, object?>
+        {
+            ["apiAvailable"] = status.ApiAvailable,
+            ["statusKnown"] = status.StatusKnown,
+            ["surroundEnabled"] = status.Enabled,
+            ["configuredTopology"] = status.HasConfiguredTopology,
+            ["topology"] = status.Topology,
+            ["fullGridCaptured"] = status.FullGridCaptured,
+            ["gridCount"] = status.DisplayGrids?.Count ?? 0
+        };
+        if (nvApiCode.HasValue) data["nvapiCode"] = nvApiCode.Value;
+        _diagnostics.Write(status.StatusKnown ? "info" : "warning", "nvidia.status", status.Description, data);
+        return status;
     }
 
     private void ApplyDisplayGrids(IReadOnlyList<NvidiaSurroundDisplayGridSnapshot> grids)
     {
         var v2Grids = grids.Select(ToNativeV2).ToArray();
         var result = ValidateAndSet(v2Grids, out var validationFailure);
+        _diagnostics.Write(result == NvApiOk ? "info" : "warning", "nvidia.grid.apply_v2",
+            validationFailure, new Dictionary<string, object?> { ["nvapiCode"] = result });
         if (result == NvApiIncompatibleStructVersion)
         {
             if (grids.Any(grid => grid.PixelShift || grid.Displays.Any(display => display.PixelShiftType != 0)))
                 throw new InvalidOperationException("The installed NVIDIA driver cannot restore this pixel-shift grid format.");
             var v1Grids = grids.Select(ToNativeV1).ToArray();
             result = ValidateAndSet(v1Grids, out validationFailure);
+            _diagnostics.Write(result == NvApiOk ? "info" : "error", "nvidia.grid.apply_v1",
+                validationFailure, new Dictionary<string, object?> { ["nvapiCode"] = result });
         }
 
         if (result == NvApiDriverReloadRequired)
@@ -640,6 +687,8 @@ public sealed class NvidiaSurroundService : INvidiaSurroundService, IDisposable
             var initializePointer = NvApiQueryInterface(InitializeId);
             if (initializePointer == IntPtr.Zero)
             {
+                _diagnostics.Write("warning", "nvidia.initialize.unavailable",
+                    "The NVIDIA driver does not expose NVAPI initialization.");
                 _initializationError = "The NVIDIA driver does not expose NVAPI initialization.";
                 return;
             }
@@ -647,6 +696,8 @@ public sealed class NvidiaSurroundService : INvidiaSurroundService, IDisposable
             var result = initialize();
             if (result != NvApiOk)
             {
+                _diagnostics.Write("error", "nvidia.initialize.failed",
+                    data: new Dictionary<string, object?> { ["nvapiCode"] = result });
                 _initializationError = $"NVIDIA NVAPI initialization failed ({result}).";
                 return;
             }
@@ -660,10 +711,23 @@ public sealed class NvidiaSurroundService : INvidiaSurroundService, IDisposable
             _validateDisplayGrids = GetDelegate<ValidateDisplayGridsDelegate>(ValidateDisplayGridsId);
             _setDisplayGrids = GetDelegate<SetDisplayGridsDelegate>(SetDisplayGridsId);
             _unload = GetDelegate<UnloadDelegate>(UnloadId);
+            _diagnostics.Write("info", "nvidia.initialize.completed", data: new Dictionary<string, object?>
+            {
+                ["topologyApiAvailable"] = _getCurrentTopology is not null,
+                ["gridApiAvailable"] = _enumDisplayGrids is not null && _validateDisplayGrids is not null &&
+                                       _setDisplayGrids is not null
+            });
         }
-        catch (DllNotFoundException) { _initializationError = "No NVIDIA driver was found."; }
-        catch (EntryPointNotFoundException) { _initializationError = "The installed NVIDIA driver does not expose NVAPI."; }
-        catch (BadImageFormatException) { _initializationError = "The NVIDIA driver architecture does not match Sherpa Manager."; }
+        catch (Exception exception) when (exception is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
+        {
+            _diagnostics.Error("nvidia.initialize.exception", exception);
+            _initializationError = exception switch
+            {
+                DllNotFoundException => "No NVIDIA driver was found.",
+                EntryPointNotFoundException => "The installed NVIDIA driver does not expose NVAPI.",
+                _ => "The NVIDIA driver architecture does not match Sherpa Manager."
+            };
+        }
     }
 
     private static T? GetDelegate<T>(uint functionId) where T : Delegate

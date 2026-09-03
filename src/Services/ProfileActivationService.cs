@@ -1,18 +1,42 @@
+using System.Diagnostics;
 using SherpaManager.Models;
 
 namespace SherpaManager.Services;
 
-public sealed class ProfileActivationService(IDisplayConfigurationService displays, IProcessService processes)
+public sealed class ProfileActivationService(IDisplayConfigurationService displays, IProcessService processes,
+    IDiagnosticLog? diagnostics = null)
 {
     private readonly SemaphoreSlim _activationLock = new(1, 1);
+    private readonly IDiagnosticLog _diagnostics = diagnostics ?? NullDiagnosticLog.Instance;
 
     public async Task<bool> ActivateAsync(ProfileDocument document, SwitchProfile target,
         Action<string> report, Func<DisplaySnapshot, Task<bool>>? confirmDisplay = null,
         CancellationToken cancellationToken = default)
     {
         if (!await _activationLock.WaitAsync(0, cancellationToken))
+        {
+            _diagnostics.Write("warning", "activation.rejected", "Another profile switch is already in progress.",
+                new Dictionary<string, object?> { ["targetProfileId"] = target.Id });
             throw new InvalidOperationException("Another profile switch is already in progress.");
+        }
 
+        var totalDuration = Stopwatch.StartNew();
+        var previousStageMilliseconds = 0L;
+        var outcome = "failed";
+        void LogStage(string stage, IReadOnlyDictionary<string, object?>? data = null)
+        {
+            var elapsed = totalDuration.ElapsedMilliseconds;
+            _diagnostics.Write("info", "activation.stage", stage, data,
+                Math.Max(0, elapsed - previousStageMilliseconds));
+            previousStageMilliseconds = elapsed;
+        }
+        _diagnostics.Write("info", "activation.started", data: new Dictionary<string, object?>
+        {
+            ["targetProfileId"] = target.Id,
+            ["applicationCount"] = target.Applications.Count,
+            ["hasDisplayLayout"] = target.Display is not null,
+            ["surroundMode"] = target.NvidiaSurroundMode
+        });
         SwitchProfile? previous = null;
         IReadOnlyCollection<LaunchApplication> previousApplicationsInitiallyRunning = [];
         var startedTargetApplications = new List<LaunchApplication>();
@@ -22,6 +46,10 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
         {
             var targetApps = target.Applications.Where(app => app.Enabled).ToList();
             foreach (var app in targetApps) processes.Validate(app);
+            LogStage("validation.completed", new Dictionary<string, object?>
+            {
+                ["enabledApplicationCount"] = targetApps.Count
+            });
             // Invalidate delayed close/minimize work before any awaited display or
             // close operation. A prior watcher must never act on an application the
             // profile being activated now wants to keep.
@@ -40,21 +68,36 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
                     ? await displays.RestoreAsync(target.Display, target.NvidiaSurroundMode, confirmDisplay!,
                         cancellationToken, confirmOnlyWhenVerificationChanged: true)
                     : await displays.RestoreAsync(target.Display, target.NvidiaSurroundMode, cancellationToken);
+                LogStage("display.completed", new Dictionary<string, object?>
+                {
+                    ["kept"] = displayResult.Kept,
+                    ["usedAdjustedModes"] = displayResult.UsedAdjustedModes
+                });
                 report(displayResult.Message);
                 if (!displayResult.Kept)
                 {
                     report("The display test was reverted; profile applications were not started.");
+                    outcome = "display_reverted";
                     return false;
                 }
                 displayApplied = true;
             }
-            else report("Keeping the current display layout.");
+            else
+            {
+                report("Keeping the current display layout.");
+                LogStage("display.skipped");
+            }
 
             if (previous is not null && previous.Id != target.Id)
             {
                 applicationTransitionStarted = true;
                 var closeResult = await ClosePreviousApplicationsAsync(previous, targetApps, report,
                     cancellationToken);
+                LogStage("previous_applications.completed", new Dictionary<string, object?>
+                {
+                    ["canContinue"] = closeResult.CanContinue,
+                    ["warningCount"] = closeResult.Warnings.Count
+                });
 
                 warnings.AddRange(closeResult.Warnings);
                 if (!closeResult.CanContinue)
@@ -63,6 +106,7 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
                     var applicationsToRestart = previousApplicationsInitiallyRunning
                         .Concat(closeResult.ApplicationsToRestart).ToList();
                     await CompensateFailedSwitchAsync(previous, applicationsToRestart, [], displayApplied, report);
+                    outcome = "previous_application_close_failed";
                     return false;
                 }
             }
@@ -109,28 +153,60 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
                 catch (OperationCanceledException) { throw; }
                 catch (Exception exception)
                 {
+                    _diagnostics.Error("activation.application.failed", exception,
+                        new Dictionary<string, object?>
+                        {
+                            ["applicationId"] = app.Id,
+                            ["applicationPath"] = app.Path
+                        });
                     var warning = $"Could not start or manage {app.Name} ({app.Path}): {exception.Message}";
                     report(warning);
                     warnings.Add(warning);
                 }
             }
+            LogStage("target_applications.completed", new Dictionary<string, object?>
+            {
+                ["startedCount"] = startedTargetApplications.Count,
+                ["warningCount"] = warnings.Count
+            });
 
             target.LastActivatedUtc = DateTime.UtcNow;
             document.ActiveProfileId = target.Id;
             report(warnings.Count == 0
                 ? $"{target.Name} is ready."
                 : $"{target.Name} is active with {warnings.Count} warning{(warnings.Count == 1 ? string.Empty : "s")}: {string.Join(" ", warnings)}");
+            outcome = warnings.Count == 0 ? "succeeded" : "succeeded_with_warnings";
             return true;
         }
         catch (OperationCanceledException)
         {
+            outcome = "cancelled";
             if (applicationTransitionStarted)
                 await CompensateFailedSwitchAsync(previous, previousApplicationsInitiallyRunning,
                     startedTargetApplications, displayApplied, report);
             report("Profile switch cancelled; the previous state was restored.");
             throw;
         }
-        finally { _activationLock.Release(); }
+        catch (Exception exception)
+        {
+            _diagnostics.Error("activation.failed", exception, new Dictionary<string, object?>
+            {
+                ["targetProfileId"] = target.Id,
+                ["outcome"] = outcome
+            }, totalDuration.ElapsedMilliseconds);
+            throw;
+        }
+        finally
+        {
+            totalDuration.Stop();
+            _diagnostics.Write(outcome.StartsWith("succeeded", StringComparison.Ordinal) ? "info" : "warning",
+                "activation.completed", outcome, new Dictionary<string, object?>
+                {
+                    ["targetProfileId"] = target.Id,
+                    ["outcome"] = outcome
+                }, totalDuration.ElapsedMilliseconds);
+            _activationLock.Release();
+        }
     }
 
     private IReadOnlyCollection<LaunchApplication> FindRunningPreviousApplications(SwitchProfile previous,
@@ -171,8 +247,14 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
         {
             string previousIdentity;
             try { previousIdentity = processes.GetIdentityKey(app); }
-            catch
+            catch (Exception exception)
             {
+                _diagnostics.Error("activation.application_identity.failed", exception,
+                    new Dictionary<string, object?>
+                    {
+                        ["applicationId"] = app.Id,
+                        ["applicationPath"] = app.Path
+                    });
                 var warning = $"Could not identify {app.Name}; its close step was skipped.";
                 report(warning);
                 warnings.Add(warning);
@@ -182,8 +264,14 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
             if (targetIdentities.Contains(previousIdentity) || !scheduledIdentities.Add(previousIdentity)) continue;
             var wasRunning = false;
             try { wasRunning = processes.IsRunning(app); }
-            catch
+            catch (Exception exception)
             {
+                _diagnostics.Error("activation.application_running_check.failed", exception,
+                    new Dictionary<string, object?>
+                    {
+                        ["applicationId"] = app.Id,
+                        ["applicationPath"] = app.Path
+                    });
                 // CloseAsync still provides the authoritative result. Failure to
                 // inspect the initial state must not prevent a normal close attempt.
             }
@@ -198,6 +286,12 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
             catch (OperationCanceledException) { throw; }
             catch (Exception exception)
             {
+                _diagnostics.Error("activation.application_close.failed", exception,
+                    new Dictionary<string, object?>
+                    {
+                        ["applicationId"] = closeTask.App.Id,
+                        ["applicationPath"] = closeTask.App.Path
+                    });
                 closeResult = new ProcessCloseResult(ProcessCloseStatus.MonitoringFailed, 0,
                     $"Could not close {closeTask.App.Name}: {exception.Message}");
             }
@@ -243,6 +337,12 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
             }
             catch (Exception exception)
             {
+                _diagnostics.Error("activation.recovery.target_close.failed", exception,
+                    new Dictionary<string, object?>
+                    {
+                        ["applicationId"] = app.Id,
+                        ["applicationPath"] = app.Path
+                    });
                 recoveryFailures.Add($"Could not close {app.Name} from the cancelled profile: {exception.Message}");
             }
         }
@@ -267,6 +367,7 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
             }
             catch (Exception exception)
             {
+                _diagnostics.Error("activation.recovery.display.failed", exception);
                 recoveryFailures.Add($"The previous display layout could not be restored: {exception.Message}");
             }
         }
@@ -286,6 +387,12 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
             }
             catch (Exception exception)
             {
+                _diagnostics.Error("activation.recovery.application_restart.failed", exception,
+                    new Dictionary<string, object?>
+                    {
+                        ["applicationId"] = app.Id,
+                        ["applicationPath"] = app.Path
+                    });
                 recoveryFailures.Add($"Could not restart {app.Name}: {exception.Message}");
             }
         }

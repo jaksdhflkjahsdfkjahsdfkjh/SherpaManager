@@ -21,6 +21,9 @@ internal static class Program
             ("A shell handler is not mistaken for the app it launches", TestShellHandlerIsolationAsync),
             ("Untrackable scripts report lifecycle limitations", TestUntrackableScriptWarningAsync),
             ("Settings persist", TestSettingsPersistenceAsync),
+            ("Diagnostics redact paths and preserve native error codes", TestDiagnosticsRedactionAsync),
+            ("Diagnostics rotate within their file limit", TestDiagnosticsRotationAsync),
+            ("Copied diagnostics contain a redacted live summary", TestDiagnosticsReportAsync),
             ("Single-instance activation signal works", TestSingleInstanceSignalAsync),
             ("Single-instance acknowledgement waits for completed activation", TestSingleInstanceDelayedAcknowledgementAsync),
             ("A rejected activation can hand ownership to a replacement instance", TestSingleInstanceShutdownHandoffAsync),
@@ -368,6 +371,90 @@ internal static class Program
         snapshot.IsVerified = false;
         Assert(!(bool)(matches.Invoke(null, [snapshot, "ABC123"]) ?? true),
             "An unverified profile incorrectly skipped confirmation.");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestDiagnosticsRedactionAsync()
+    {
+        using var directory = new TemporaryDirectory();
+        var diagnostics = new DiagnosticsService(directory.Path, maximumFileBytes: 4096,
+            maximumFileCount: 3, () => new DateTime(2026, 9, 4, 0, 0, 0, DateTimeKind.Utc));
+        const string privatePath = @"C:\Users\PrivateUser\Games\secret.exe";
+        var exception = new InvalidOperationException("NVAPI -157 rejected the operation.",
+            new Win32Exception(5, $"Access denied for {privatePath}"));
+        diagnostics.Error("test.native_error", exception, new Dictionary<string, object?>
+        {
+            ["applicationPath"] = privatePath,
+            ["arguments"] = new[] { "--password", "secret" }
+        });
+
+        var log = string.Join('\n', diagnostics.ReadRecentLines(20));
+        Assert(!log.Contains("PrivateUser", StringComparison.Ordinal) &&
+               !log.Contains("secret.exe", StringComparison.OrdinalIgnoreCase),
+            "Diagnostics exposed an application path.");
+        Assert(log.Contains("<redacted-path>", StringComparison.Ordinal),
+            $"Diagnostics did not mark the redacted path. Log: {log}");
+        Assert(log.Contains("\"win32Codes\":[5]", StringComparison.Ordinal),
+            "The exact Windows error code was not preserved.");
+        Assert(log.Contains("\"nvapiCodes\":[-157]", StringComparison.Ordinal),
+            "The exact NVAPI error code was not preserved.");
+        Assert(!log.Contains("--password", StringComparison.Ordinal),
+            "Diagnostics exposed command-line arguments.");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestDiagnosticsRotationAsync()
+    {
+        using var directory = new TemporaryDirectory();
+        var diagnostics = new DiagnosticsService(directory.Path, maximumFileBytes: 256,
+            maximumFileCount: 3);
+        for (var index = 0; index < 20; index++)
+            diagnostics.Write("info", "test.rotation", $"event-{index:D2}-" + new string('x', 120));
+
+        Assert(File.Exists(Path.Combine(directory.Path, "sherpa.1.log")),
+            "The diagnostic log was not rotated.");
+        Assert(Directory.GetFiles(directory.Path, "sherpa*.log").Length <= 3,
+            "Diagnostics retained more files than configured.");
+        Assert(diagnostics.ReadRecentLines(20).Any(line => line.Contains("event-19", StringComparison.Ordinal)),
+            "The newest event was lost during rotation.");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestDiagnosticsReportAsync()
+    {
+        using var directory = new TemporaryDirectory();
+        var diagnostics = new DiagnosticsService(directory.Path, maximumFileBytes: 4096,
+            maximumFileCount: 3);
+        diagnostics.Write("info", "activation.stage", "display.completed", durationMs: 42);
+        var topology = new DisplaySnapshot
+        {
+            LogicalDisplayCount = 1,
+            ActiveTargets = [new DisplayTargetSnapshot
+            {
+                FriendlyName = "Test monitor",
+                MonitorDevicePath = @"C:\private\monitor-path",
+                SourceWidth = 1920,
+                SourceHeight = 1080,
+                RefreshNumerator = 60000,
+                RefreshDenominator = 1000
+            }],
+            NvidiaSurround = new NvidiaSurroundSnapshot
+            {
+                ApiAvailable = true,
+                StatusKnown = true,
+                Description = "NVIDIA Surround: not configured."
+            }
+        };
+
+        var report = diagnostics.CreateClipboardReport(topology);
+        Assert(report.Contains("Sherpa version:", StringComparison.Ordinal) &&
+               report.Contains("Windows:", StringComparison.Ordinal) &&
+               report.Contains("NVIDIA API status:", StringComparison.Ordinal) &&
+               report.Contains("Test monitor: 1920x1080", StringComparison.Ordinal) &&
+               report.Contains("activation.stage", StringComparison.Ordinal),
+            "The copied diagnostic report is missing required sections.");
+        Assert(!report.Contains("monitor-path", StringComparison.Ordinal),
+            "The copied diagnostic report exposed a monitor path.");
         return Task.CompletedTask;
     }
 

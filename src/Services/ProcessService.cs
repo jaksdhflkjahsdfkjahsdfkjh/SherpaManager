@@ -7,7 +7,7 @@ using SherpaManager.Models;
 
 namespace SherpaManager.Services;
 
-public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IProcessService
+public sealed class ProcessService(LaunchTargetResolver? resolver = null, IDiagnosticLog? diagnostics = null) : IProcessService
 {
     private const uint WmClose = 0x0010;
     private const int SwMinimize = 6;
@@ -16,6 +16,7 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
     private static readonly TimeSpan StandardMinimizationObservation = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan LauncherSettlingObservation = TimeSpan.FromSeconds(45);
     private readonly LaunchTargetResolver _resolver = resolver ?? new LaunchTargetResolver();
+    private readonly IDiagnosticLog _diagnostics = diagnostics ?? NullDiagnosticLog.Instance;
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<int, DateTime>> _trackedProcesses =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, DateTime> _processFamilyTrackingDeadlines =
@@ -32,7 +33,22 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
     public event Action<PendingProcessCloseOutcome>? PendingCloseCompleted;
     public event Action<PendingProcessMinimizationOutcome>? PendingMinimizationCompleted;
 
-    public ResolvedLaunchTarget Resolve(LaunchApplication app) => _resolver.Resolve(app);
+    public ResolvedLaunchTarget Resolve(LaunchApplication app)
+    {
+        var target = _resolver.Resolve(app);
+        _diagnostics.Write("debug", "process.target.resolved", data: new Dictionary<string, object?>
+        {
+            ["applicationId"] = app.Id,
+            ["launchPath"] = target.LaunchPath,
+            ["executablePath"] = target.ExecutablePath,
+            ["processName"] = target.ProcessName,
+            ["identity"] = target.IdentityKey,
+            ["shortcutOrProtocol"] = target.IsShortcutOrProtocol,
+            ["explicitProcessName"] = target.HasExplicitProcessName,
+            ["managedExecutableCount"] = target.ManagedExecutablePaths?.Count ?? 0
+        });
+        return target;
+    }
 
     public void Validate(LaunchApplication app)
     {
@@ -79,9 +95,23 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
             {
                 if (HasReachedFinalManagedProcess(processes, target))
                     _pendingLaunches.TryRemove(target.IdentityKey, out _);
+                _diagnostics.Write("debug", "process.running.checked", data: new Dictionary<string, object?>
+                {
+                    ["applicationId"] = app.Id,
+                    ["matchedCount"] = processes.Count,
+                    ["isRunning"] = true
+                });
                 return true;
             }
-            return IsPending(target.IdentityKey);
+            var pending = IsPending(target.IdentityKey);
+            _diagnostics.Write("debug", "process.running.checked", data: new Dictionary<string, object?>
+            {
+                ["applicationId"] = app.Id,
+                ["matchedCount"] = 0,
+                ["pendingLaunch"] = pending,
+                ["isRunning"] = pending
+            });
+            return pending;
         }
         finally { DisposeAll(processes); }
     }
@@ -109,7 +139,9 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
 
         if (process is not null)
         {
-            if (ProcessMatchesTarget(process, target))
+            var match = GetProcessTargetMatch(process, target);
+            LogProcessMatch(app, target, process, match, "launch_result");
+            if (match == ProcessTargetMatch.Yes)
             {
                 Track(target.IdentityKey, process);
                 BeginProcessFamilyObservation(target.IdentityKey);
@@ -334,7 +366,10 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
         {
             // Implicit executable matching is canonical-path based. A user-entered
             // Process name is the only deliberately broad matching mode.
-            if (!ProcessMatchesTarget(process, target) && !IsTracked(target.IdentityKey, process)) continue;
+            var match = GetProcessTargetMatch(process, target);
+            var tracked = IsTracked(target.IdentityKey, process);
+            LogProcessMatch(app, target, process, match, tracked ? "force_close_tracked" : "force_close_candidate");
+            if (match != ProcessTargetMatch.Yes && !tracked) continue;
             try
             {
                 process.Kill(entireProcessTree: true);
@@ -396,6 +431,7 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
             foreach (var process in Process.GetProcessesByName(target.ProcessName))
             {
                 var match = GetProcessTargetMatch(process, target);
+                LogProcessMatch(app, target, process, match, "process_name_enumeration");
                 if (match == ProcessTargetMatch.Yes && byId.TryAdd(process.Id, process)) continue;
                 if (match == ProcessTargetMatch.Unknown) exactPathCouldNotBeChecked = true;
                 process.Dispose();
@@ -411,9 +447,14 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
                     var process = Process.GetProcessById(item.Key);
                     if (process.StartTime.ToUniversalTime() == item.Value)
                     {
+                        LogProcessMatch(app, target, process, ProcessTargetMatch.Yes, "tracked_process");
                         if (!byId.TryAdd(process.Id, process)) process.Dispose();
                     }
-                    else process.Dispose();
+                    else
+                    {
+                        LogProcessMatch(app, target, process, ProcessTargetMatch.No, "tracked_pid_reused");
+                        process.Dispose();
+                    }
                 }
                 catch (ArgumentException) { }
                 catch (InvalidOperationException) { }
@@ -424,6 +465,27 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
             throw new UnauthorizedAccessException(
                 $"Windows would not allow Sherpa to verify the executable path for a running {target.ProcessName} process. Run Sherpa with the same administrator setting as that application.");
         return byId.Values.ToList();
+    }
+
+    private void LogProcessMatch(LaunchApplication app, ResolvedLaunchTarget target, Process process,
+        ProcessTargetMatch match, string source)
+    {
+        string? processName;
+        try { processName = process.ProcessName; }
+        catch { processName = null; }
+        _diagnostics.Write(match == ProcessTargetMatch.Unknown ? "warning" : "debug", "process.match",
+            data: new Dictionary<string, object?>
+            {
+                ["applicationId"] = app.Id,
+                ["candidateProcessId"] = process.Id,
+                ["candidateProcessName"] = processName,
+                ["expectedProcessName"] = target.ProcessName,
+                ["expectedExecutablePath"] = target.ExecutablePath,
+                ["matchingMode"] = target.HasExplicitProcessName ? "explicit_process_name" :
+                    string.IsNullOrWhiteSpace(target.ExecutablePath) ? "process_name" : "canonical_path",
+                ["decision"] = match.ToString().ToLowerInvariant(),
+                ["source"] = source
+            });
     }
 
     private static bool ProcessMatchesTarget(Process process, ResolvedLaunchTarget target) =>

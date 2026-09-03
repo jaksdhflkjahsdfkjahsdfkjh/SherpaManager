@@ -15,8 +15,9 @@ namespace SherpaManager;
 public partial class MainWindow : Window
 {
     private readonly ProfileStore _store = new();
-    private readonly DisplayConfigurationService _displays = new();
-    private readonly ProcessService _processes = new();
+    private readonly DiagnosticsService _diagnostics;
+    private readonly DisplayConfigurationService _displays;
+    private readonly ProcessService _processes;
     private readonly ProfileActivationService _activator;
     private readonly System.Drawing.Icon? _applicationIcon;
     private readonly Forms.NotifyIcon _trayIcon;
@@ -42,6 +43,9 @@ public partial class MainWindow : Window
 
     public MainWindow()
     {
+        _diagnostics = DiagnosticsService.Current;
+        _displays = new DisplayConfigurationService(diagnostics: _diagnostics);
+        _processes = new ProcessService(diagnostics: _diagnostics);
         InitializeComponent();
         SurroundModeCombo.ItemsSource = new[]
         {
@@ -49,7 +53,7 @@ public partial class MainWindow : Window
             new SurroundModeOption(NvidiaSurroundMode.RequireEnabled, "Require enabled"),
             new SurroundModeOption(NvidiaSurroundMode.RequireDisabled, "Require disabled")
         };
-        _activator = new ProfileActivationService(_displays, _processes);
+        _activator = new ProfileActivationService(_displays, _processes, _diagnostics);
         _processes.PendingCloseCompleted += ProcessService_PendingCloseCompleted;
         _processes.PendingMinimizationCompleted += ProcessService_PendingMinimizationCompleted;
         _applicationIcon = TryLoadApplicationIcon();
@@ -537,6 +541,32 @@ public partial class MainWindow : Window
         await SaveAsync();
     }
 
+    private void CopyDiagnostics_Click(object sender, RoutedEventArgs e)
+    {
+        DisplaySnapshot? topology = null;
+        string? topologyError = null;
+        try { topology = _displays.Capture(); }
+        catch (Exception exception)
+        {
+            topologyError = exception.Message;
+            _diagnostics.Error("diagnostics.topology_capture.failed", exception);
+        }
+
+        try
+        {
+            _diagnostics.Write("info", "diagnostics.copy.requested", data: new Dictionary<string, object?>
+            {
+                ["topologyAvailable"] = topology is not null
+            });
+            System.Windows.Clipboard.SetText(_diagnostics.CreateClipboardReport(topology, topologyError));
+            StatusText.Text = "Redacted diagnostics copied to the clipboard.";
+        }
+        catch (Exception exception)
+        {
+            ShowError("Could not copy diagnostics", exception);
+        }
+    }
+
     private async void Profile_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName != nameof(SwitchProfile.NvidiaSurroundMode) || sender is not SwitchProfile profile) return;
@@ -927,6 +957,7 @@ public partial class MainWindow : Window
 
     private void ShowError(string title, Exception exception)
     {
+        _diagnostics.Error("ui.error", exception, new Dictionary<string, object?> { ["title"] = title });
         StatusText.Text = exception.Message;
         System.Windows.MessageBox.Show(this, exception.Message, title, MessageBoxButton.OK, MessageBoxImage.Error);
     }

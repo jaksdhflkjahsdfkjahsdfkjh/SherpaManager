@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -36,11 +37,14 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
     private readonly INvidiaSurroundService _nvidiaSurround;
     private readonly DisplayRecoveryStore _recoveryStore;
     private readonly DisplayTransactionStore _transactionStore;
+    private readonly IDiagnosticLog _diagnostics;
 
     public DisplayConfigurationService(INvidiaSurroundService? nvidiaSurround = null,
-        DisplayRecoveryStore? recoveryStore = null, DisplayTransactionStore? transactionStore = null)
+        DisplayRecoveryStore? recoveryStore = null, DisplayTransactionStore? transactionStore = null,
+        IDiagnosticLog? diagnostics = null)
     {
-        _nvidiaSurround = nvidiaSurround ?? new NvidiaSurroundService();
+        _diagnostics = diagnostics ?? NullDiagnosticLog.Instance;
+        _nvidiaSurround = nvidiaSurround ?? new NvidiaSurroundService(_diagnostics);
         _recoveryStore = recoveryStore ?? new DisplayRecoveryStore();
         _transactionStore = transactionStore ?? new DisplayTransactionStore();
     }
@@ -105,8 +109,33 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
         bool saveEmergencySnapshot, bool trackInterruptedTransaction,
         bool confirmOnlyWhenVerificationChanged, CancellationToken cancellationToken)
     {
+        var totalDuration = Stopwatch.StartNew();
+        var previousStageMilliseconds = 0L;
+        void LogStage(string stage, IReadOnlyDictionary<string, object?>? data = null)
+        {
+            var elapsed = totalDuration.ElapsedMilliseconds;
+            _diagnostics.Write("info", "display.restore.stage", stage, data,
+                Math.Max(0, elapsed - previousStageMilliseconds));
+            previousStageMilliseconds = elapsed;
+        }
+        _diagnostics.Write("info", "display.restore.started", data: new Dictionary<string, object?>
+        {
+            ["logicalDisplayCount"] = requested.LogicalDisplayCount,
+            ["targetCount"] = requested.ActiveTargets.Count,
+            ["targetTopology"] = requested.ActiveTargets.Select(target =>
+                $"{target.FriendlyName}:{target.SourceWidth}x{target.SourceHeight}@" +
+                $"{target.SourceX},{target.SourceY}:{target.RefreshNumerator}/{target.RefreshDenominator}").ToArray(),
+            ["surroundMode"] = surroundMode,
+            ["saveEmergencySnapshot"] = saveEmergencySnapshot,
+            ["requiresConditionalConfirmation"] = confirmOnlyWhenVerificationChanged
+        });
         ValidateSnapshotStructures(requested);
         var emergencySnapshot = Capture();
+        LogStage("recovery_snapshot.captured", new Dictionary<string, object?>
+        {
+            ["logicalDisplayCount"] = emergencySnapshot.LogicalDisplayCount,
+            ["targetCount"] = emergencySnapshot.ActiveTargets.Count
+        });
         if (saveEmergencySnapshot) _recoveryStore.Save(emergencySnapshot);
         var surroundWasManaged = surroundMode != NvidiaSurroundMode.Ignore;
         if (surroundWasManaged && emergencySnapshot.NvidiaSurround?.StatusKnown != true)
@@ -117,12 +146,22 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
         try
         {
             await ApplySurroundModeAsync(requested.NvidiaSurround, surroundMode, cancellationToken);
+            LogStage("nvidia.completed");
             await WaitForTargetInventoryAsync(requested, cancellationToken);
             var prepared = PrepareSnapshotForCurrentHardware(requested);
+            LogStage("hardware_mapping.completed", new Dictionary<string, object?>
+            {
+                ["mappedTargetCount"] = prepared.ActiveTargets.Count
+            });
 
             var usedAdjustedModes = ApplyRaw(prepared, saveToDatabase: false);
             var settled = await WaitForAppliedSnapshotAsync(prepared, surroundMode,
                 requireExactSemantics: !usedAdjustedModes, cancellationToken);
+            LogStage("temporary_layout.verified", new Dictionary<string, object?>
+            {
+                ["usedAdjustedModes"] = usedAdjustedModes,
+                ["logicalDisplayCount"] = settled.LogicalDisplayCount
+            });
 
             var verificationFingerprint = CreateVerificationEnvironmentFingerprint(settled);
             var verificationMatches = VerificationEnvironmentMatches(requested, verificationFingerprint);
@@ -137,7 +176,9 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
             if (shouldConfirm && !await confirm!(settled))
             {
                 await RollbackAsync(emergencySnapshot, surroundWasManaged, CancellationToken.None);
+                LogStage("confirmation.rejected_and_rolled_back");
                 if (trackInterruptedTransaction) _transactionStore.Complete();
+                _diagnostics.Write("warning", "display.restore.completed", "reverted", durationMs: totalDuration.ElapsedMilliseconds);
                 return new DisplayRestoreResult(usedAdjustedModes,
                     "The display test was reverted; the requested layout was not saved to Windows.", Kept: false);
             }
@@ -146,6 +187,7 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
             ApplyRaw(commitSnapshot, saveToDatabase: true);
             var committed = await WaitForAppliedSnapshotAsync(commitSnapshot, surroundMode,
                 requireExactSemantics: true, cancellationToken);
+            LogStage("layout.committed");
 
             CopyLayout(committed, requested);
             if (shouldConfirm)
@@ -155,6 +197,11 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
                 requested.VerifiedAtUtc = DateTime.UtcNow;
             }
             if (trackInterruptedTransaction) _transactionStore.Complete();
+            _diagnostics.Write("info", "display.restore.completed", "kept", new Dictionary<string, object?>
+            {
+                ["usedAdjustedModes"] = usedAdjustedModes,
+                ["confirmationShown"] = shouldConfirm
+            }, totalDuration.ElapsedMilliseconds);
             return new DisplayRestoreResult(usedAdjustedModes,
                 usedAdjustedModes
                     ? "Display layout applied and verified. Windows selected compatible mode values, which Sherpa saved for this profile."
@@ -162,6 +209,11 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
         }
         catch (Exception failure)
         {
+            _diagnostics.Error("display.restore.failed", failure, new Dictionary<string, object?>
+            {
+                ["surroundMode"] = surroundMode,
+                ["targetCount"] = requested.ActiveTargets.Count
+            }, totalDuration.ElapsedMilliseconds);
             var rollbackMessage = "Automatic rollback failed; use Win+P or Windows Display Settings to recover.";
             var rollbackSucceeded = false;
             try
@@ -172,6 +224,7 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
             }
             catch (Exception rollbackFailure)
             {
+                _diagnostics.Error("display.rollback.failed", rollbackFailure);
                 rollbackMessage = $"Automatic rollback also failed: {rollbackFailure.Message} Use Win+P or Windows Display Settings to recover.";
             }
 
@@ -474,18 +527,41 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
 
         var exactValidation = SetDisplayConfig((uint)paths.Length, paths, (uint)modes.Length, modes,
             baseFlags | SdcValidate);
+        _diagnostics.Write(exactValidation == 0 ? "debug" : "warning", "display.windows.validate",
+            data: new Dictionary<string, object?>
+            {
+                ["win32Code"] = exactValidation,
+                ["allowChanges"] = false,
+                ["pathCount"] = paths.Length,
+                ["modeCount"] = modes.Length
+            });
         var useAdjustedModes = exactValidation == ErrorBadConfiguration;
         if (!useAdjustedModes) ThrowIfFailed(exactValidation);
         if (useAdjustedModes)
         {
-            ThrowIfFailed(SetDisplayConfig((uint)paths.Length, paths, (uint)modes.Length, modes,
-                baseFlags | SdcValidate | SdcAllowChanges));
+            var adjustedValidation = SetDisplayConfig((uint)paths.Length, paths, (uint)modes.Length, modes,
+                baseFlags | SdcValidate | SdcAllowChanges);
+            _diagnostics.Write(adjustedValidation == 0 ? "info" : "error", "display.windows.validate_adjusted",
+                data: new Dictionary<string, object?>
+                {
+                    ["win32Code"] = adjustedValidation,
+                    ["allowChanges"] = true
+                });
+            ThrowIfFailed(adjustedValidation);
         }
 
         var applyFlags = baseFlags | SdcApply;
         if (useAdjustedModes) applyFlags |= SdcAllowChanges;
         if (saveToDatabase) applyFlags |= SdcSaveToDatabase;
-        ThrowIfFailed(SetDisplayConfig((uint)paths.Length, paths, (uint)modes.Length, modes, applyFlags));
+        var applyResult = SetDisplayConfig((uint)paths.Length, paths, (uint)modes.Length, modes, applyFlags);
+        _diagnostics.Write(applyResult == 0 ? "debug" : "error", "display.windows.apply",
+            data: new Dictionary<string, object?>
+            {
+                ["win32Code"] = applyResult,
+                ["saveToDatabase"] = saveToDatabase,
+                ["allowChanges"] = useAdjustedModes
+            });
+        ThrowIfFailed(applyResult);
         return useAdjustedModes;
     }
 
@@ -506,7 +582,12 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
                 lastMatch = matches ? actual : null;
                 if (consecutiveMatches >= 2 && lastMatch is not null) return lastMatch;
             }
-            catch (Win32Exception) { consecutiveMatches = 0; }
+            catch (Win32Exception exception)
+            {
+                consecutiveMatches = 0;
+                _diagnostics.Write("warning", "display.windows.capture_retry", exception.Message,
+                    new Dictionary<string, object?> { ["win32Code"] = exception.NativeErrorCode });
+            }
             await Task.Delay(500, cancellationToken).ConfigureAwait(false);
         }
         throw new InvalidOperationException(requireExactSemantics

@@ -14,6 +14,7 @@ Sherpa Manager is a Windows utility for switching a PC between work and sim-raci
 - Keep an on-disk emergency display snapshot and offer **Restore last** from the window and tray.
 - Apply a newly captured layout temporarily the first time, then save it to Windows only after a 10-second confirmation. Sherpa asks again if the display environment later changes.
 - Cancel a profile or display operation while Sherpa safely restores the state from before it started.
+- Copy privacy-redacted diagnostics backed by a local rotating structured log.
 - Launch applications in order, resolve `.exe`, `.lnk`, `.url`, script, and protocol targets, and suppress duplicate entries.
 - Minimize delayed launcher windows such as MOZA Pit House after their real UI process appears.
 - Close visible or hidden application windows and automatically force-close unresponsive apps selected for closing.
@@ -107,7 +108,9 @@ If a restored layout is unusable:
 
 ## Data and privacy
 
-Profiles are stored in `%APPDATA%\SherpaManager\profiles.json`. Sherpa has no accounts, telemetry, or network service. Executable paths and profile settings remain local unless you share the profile file yourself.
+Profiles are stored in `%APPDATA%\SherpaManager\profiles.json`. Structured diagnostic logs are stored locally in `%LOCALAPPDATA%\SherpaManager\Logs` as JSON Lines. Sherpa keeps at most five approximately 1 MB log files. Paths and command-line arguments are redacted before logging by default.
+
+Use **Settings → Copy diagnostics** to copy the Sherpa and Windows versions, GPU/display-driver information, NVIDIA API state, current monitor topology, activation timing, native error codes, and recent process-matching decisions. The report can still include profile/application names, monitor model names, process names and IDs, so review it before sharing. Sherpa has no accounts, telemetry, or network service; nothing is uploaded automatically.
 
 ## Known limitations
 
