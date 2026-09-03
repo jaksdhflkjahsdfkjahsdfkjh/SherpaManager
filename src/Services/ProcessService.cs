@@ -12,10 +12,14 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
     private const uint WmClose = 0x0010;
     private const int SwMinimize = 6;
     private const uint ProcessQueryLimitedInformation = 0x1000;
+    private const uint Th32csSnapProcess = 0x00000002;
     private static readonly TimeSpan StandardMinimizationObservation = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan LauncherSettlingObservation = TimeSpan.FromSeconds(45);
     private readonly LaunchTargetResolver _resolver = resolver ?? new LaunchTargetResolver();
-    private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<int, DateTime>> _trackedProcesses = new();
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<int, DateTime>> _trackedProcesses =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, DateTime> _processFamilyTrackingDeadlines =
+        new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, DateTime> _pendingLaunches = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, PendingCloseRegistration> _pendingCloseWatchers =
         new(StringComparer.OrdinalIgnoreCase);
@@ -105,12 +109,16 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
 
         if (process is not null)
         {
-            if (ProcessMatchesTarget(process, target)) Track(app, process);
+            if (ProcessMatchesTarget(process, target))
+            {
+                Track(target.IdentityKey, process);
+                BeginProcessFamilyObservation(target.IdentityKey);
+            }
             process.Dispose();
         }
 
         var lifecycleManageable = !string.IsNullOrWhiteSpace(target.ProcessName) ||
-                                  _trackedProcesses.ContainsKey(app.Id);
+                                  _trackedProcesses.ContainsKey(target.IdentityKey);
         if (!lifecycleManageable)
         {
             var unavailableActions = app.StartMinimized ? "detect, minimize, or close" : "detect or close";
@@ -137,7 +145,8 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
     public async Task<bool> MinimizeAsync(LaunchApplication app, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var target = Resolve(app);
-        if (string.IsNullOrWhiteSpace(target.ProcessName) && !_trackedProcesses.ContainsKey(app.Id)) return false;
+        if (string.IsNullOrWhiteSpace(target.ProcessName) &&
+            !_trackedProcesses.ContainsKey(target.IdentityKey)) return false;
 
         var registration = new PendingMinimizationRegistration(cancellationToken);
         PendingMinimizationRegistration? previousRegistration = null;
@@ -376,7 +385,7 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
         {
             // Implicit executable matching is canonical-path based. A user-entered
             // Process name is the only deliberately broad matching mode.
-            if (!ProcessMatchesTarget(process, target) && !IsTracked(app, process)) continue;
+            if (!ProcessMatchesTarget(process, target) && !IsTracked(target.IdentityKey, process)) continue;
             try
             {
                 process.Kill(entireProcessTree: true);
@@ -434,6 +443,7 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
 
     private List<Process> GetMatchingProcesses(LaunchApplication app, ResolvedLaunchTarget target)
     {
+        TrackDescendantProcesses(target.IdentityKey);
         var byId = new Dictionary<int, Process>();
         var exactPathCouldNotBeChecked = false;
         if (!string.IsNullOrWhiteSpace(target.ProcessName))
@@ -447,7 +457,7 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
             }
         }
 
-        if (_trackedProcesses.TryGetValue(app.Id, out var tracked))
+        if (_trackedProcesses.TryGetValue(target.IdentityKey, out var tracked))
         {
             foreach (var item in tracked)
             {
@@ -539,24 +549,120 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
         finally { CloseHandle(handle); }
     }
 
-    private void Track(LaunchApplication app, Process process)
+    private void Track(string identity, Process process)
     {
         try
         {
-            var tracked = _trackedProcesses.GetOrAdd(app.Id, _ => new ConcurrentDictionary<int, DateTime>());
+            // LaunchAsync is only reached after IsRunning returned false. Start a
+            // fresh family so stale PIDs from an application that exited on its own
+            // cannot be mistaken for parents after Windows recycles those IDs.
+            var tracked = new ConcurrentDictionary<int, DateTime>();
             tracked[process.Id] = process.StartTime.ToUniversalTime();
+            _trackedProcesses[identity] = tracked;
         }
         catch (InvalidOperationException) { }
         catch (Win32Exception) { }
     }
 
-    private bool IsTracked(LaunchApplication app, Process process)
+    private bool IsTracked(string identity, Process process)
     {
-        if (!_trackedProcesses.TryGetValue(app.Id, out var tracked) || !tracked.TryGetValue(process.Id, out var startTime))
+        if (!_trackedProcesses.TryGetValue(identity, out var tracked) ||
+            !tracked.TryGetValue(process.Id, out var startTime))
             return false;
         try { return process.StartTime.ToUniversalTime() == startTime; }
         catch (InvalidOperationException) { return false; }
         catch (Win32Exception) { return false; }
+    }
+
+    private void BeginProcessFamilyObservation(string identity)
+    {
+        var deadline = DateTime.UtcNow + LauncherSettlingObservation;
+        _processFamilyTrackingDeadlines.AddOrUpdate(identity, deadline,
+            (_, current) => LaterOf(current, deadline));
+        _ = ObserveProcessFamilyAsync(identity);
+    }
+
+    private async Task ObserveProcessFamilyAsync(string identity)
+    {
+        try
+        {
+            while (_processFamilyTrackingDeadlines.TryGetValue(identity, out var deadline) &&
+                   deadline > DateTime.UtcNow && _trackedProcesses.ContainsKey(identity))
+            {
+                TrackDescendantProcesses(identity);
+                await Task.Delay(500).ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            // Process-family discovery is an additional lifecycle signal. Exact-path
+            // and explicit process-name matching remain available if Windows denies it.
+        }
+        finally
+        {
+            if (_processFamilyTrackingDeadlines.TryGetValue(identity, out var deadline) &&
+                deadline <= DateTime.UtcNow)
+                RemoveExact(_processFamilyTrackingDeadlines, identity, deadline);
+        }
+    }
+
+    private void TrackDescendantProcesses(string identity)
+    {
+        if (!_processFamilyTrackingDeadlines.TryGetValue(identity, out var deadline) ||
+            deadline <= DateTime.UtcNow ||
+            !_trackedProcesses.TryGetValue(identity, out var tracked) || tracked.IsEmpty)
+            return;
+
+        var relatedStartTimes = tracked.ToDictionary(item => item.Key, item => item.Value);
+        var processTree = GetProcessTreeSnapshot();
+        var foundAnotherGeneration = true;
+        while (foundAnotherGeneration)
+        {
+            foundAnotherGeneration = false;
+            foreach (var entry in processTree)
+            {
+                var processId = unchecked((int)entry.ProcessId);
+                var parentProcessId = unchecked((int)entry.ParentProcessId);
+                if (processId <= 0 || relatedStartTimes.ContainsKey(processId) ||
+                    !relatedStartTimes.TryGetValue(parentProcessId, out var parentStartTime))
+                    continue;
+
+                try
+                {
+                    using var process = Process.GetProcessById(processId);
+                    if (!IsAlive(process)) continue;
+                    var startTime = process.StartTime.ToUniversalTime();
+                    // A recycled parent PID must not attach an unrelated, older process
+                    // to the application family.
+                    if (startTime + TimeSpan.FromSeconds(1) < parentStartTime) continue;
+                    tracked.TryAdd(processId, startTime);
+                    relatedStartTimes[processId] = startTime;
+                    foundAnotherGeneration = true;
+                }
+                catch (ArgumentException) { }
+                catch (InvalidOperationException) { }
+                catch (Win32Exception) { }
+            }
+        }
+    }
+
+    private static IReadOnlyList<ProcessTreeEntry> GetProcessTreeSnapshot()
+    {
+        var snapshot = CreateToolhelp32Snapshot(Th32csSnapProcess, 0);
+        if (snapshot == new IntPtr(-1)) return [];
+        try
+        {
+            var nativeEntry = new ProcessEntry32 { Size = (uint)Marshal.SizeOf<ProcessEntry32>() };
+            if (!Process32First(snapshot, ref nativeEntry)) return [];
+            var entries = new List<ProcessTreeEntry>();
+            do
+            {
+                entries.Add(new ProcessTreeEntry(nativeEntry.ProcessId, nativeEntry.ParentProcessId));
+                nativeEntry.Size = (uint)Marshal.SizeOf<ProcessEntry32>();
+            } while (Process32Next(snapshot, ref nativeEntry));
+            return entries;
+        }
+        finally { CloseHandle(snapshot); }
     }
 
     private bool IsPending(string identity)
@@ -725,7 +831,8 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
                         // Remove old tracking before making the watcher unavailable.
                         // A reactivation can then safely register a new process without
                         // this cleanup deleting the new entry.
-                        _trackedProcesses.TryRemove(app.Id, out _);
+                        _trackedProcesses.TryRemove(target.IdentityKey, out _);
+                        _processFamilyTrackingDeadlines.TryRemove(target.IdentityKey, out _);
                     }
                     var removedOwnRegistration = RemoveExact(
                         _pendingCloseWatchers, target.IdentityKey, registration);
@@ -818,7 +925,8 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
 
     private void Forget(LaunchApplication app, ResolvedLaunchTarget target)
     {
-        _trackedProcesses.TryRemove(app.Id, out _);
+        _trackedProcesses.TryRemove(target.IdentityKey, out _);
+        _processFamilyTrackingDeadlines.TryRemove(target.IdentityKey, out _);
         _pendingLaunches.TryRemove(target.IdentityKey, out _);
     }
 
@@ -907,6 +1015,23 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
     }
 
     private sealed record ForceAttempt(HashSet<uint> ProcessIds, bool Attempted, bool AccessDenied);
+    private sealed record ProcessTreeEntry(uint ProcessId, uint ParentProcessId);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct ProcessEntry32
+    {
+        public uint Size;
+        public uint Usage;
+        public uint ProcessId;
+        public IntPtr DefaultHeapId;
+        public uint ModuleId;
+        public uint Threads;
+        public uint ParentProcessId;
+        public int BasePriority;
+        public uint Flags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        public string ExecutableFile;
+    }
 
     private enum ProcessTargetMatch
     {
@@ -995,6 +1120,17 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null) : IPro
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr OpenProcess(uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, uint processId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint processId);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "Process32FirstW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool Process32First(IntPtr snapshot, ref ProcessEntry32 entry);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "Process32NextW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool Process32Next(IntPtr snapshot, ref ProcessEntry32 entry);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

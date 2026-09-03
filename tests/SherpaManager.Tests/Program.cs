@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -40,6 +41,7 @@ internal static class Program
             ("Force-close terminates a fixture that ignores WM_CLOSE", TestForceCloseFixtureAsync),
             ("Delayed launcher child window is minimized", TestDelayedLauncherMinimizationAsync),
             ("Closing a launcher also closes its delayed bin child", TestDelayedLauncherCloseAsync),
+            ("Closing a launcher also closes a differently named child", TestDifferentlyNamedLauncherChildCloseAsync),
             ("Closing a launcher before handoff does not suppress relaunch", TestPreHandoffLauncherCloseAsync),
             ("A delayed unresponsive child reports that force-close input is needed", TestDelayedCloseOutcomeAsync),
             ("Same-named executables are matched by exact path", TestSameNamedExecutableIsolationAsync)
@@ -809,6 +811,60 @@ internal static class Program
         finally
         {
             await service.ForceCloseAsync(app, CancellationToken.None);
+        }
+    }
+
+    private static async Task TestDifferentlyNamedLauncherChildCloseAsync()
+    {
+        using var directory = new TemporaryDirectory();
+        var launcherDirectory = Path.Combine(directory.Path, "launcher");
+        var childDirectory = Path.Combine(directory.Path, "helper");
+        CopyFixtureOutput(launcherDirectory);
+        CopyFixtureOutput(childDirectory);
+        var originalChildPath = Path.Combine(childDirectory, "WindowFixture.exe");
+        var childPath = Path.Combine(childDirectory, "CompanionProcess.exe");
+        File.Move(originalChildPath, childPath);
+        var startedSignal = Path.Combine(directory.Path, "different-child-started.signal");
+        var app = new LaunchApplication
+        {
+            Name = "Different-child launcher fixture",
+            Path = Path.Combine(launcherDirectory, "WindowFixture.exe"),
+            Arguments = $"--launcher-delay-ms=750 --child-path=\"{childPath}\" --started-file=\"{startedSignal}\"",
+            StartMinimized = false,
+            CloseOnDeactivate = true,
+            ForceCloseAfterTimeout = false
+        };
+        var service = new ProcessService();
+        var childId = 0;
+        try
+        {
+            var launch = await service.LaunchAsync(app, CancellationToken.None);
+            Assert(launch.Started, "The differently named child fixture did not launch.");
+            Assert(await WaitForFileAsync(startedSignal, TimeSpan.FromSeconds(4)),
+                "The differently named child process did not start.");
+            childId = int.Parse(await File.ReadAllTextAsync(startedSignal));
+            var equivalentProfileEntry = app.Clone();
+            Assert(service.IsRunning(equivalentProfileEntry),
+                "The launched process family was not retained across equivalent profile entries.");
+
+            var close = await service.CloseAsync(equivalentProfileEntry, CancellationToken.None);
+            Assert(close.Status == ProcessCloseStatus.ClosedGracefully, close.Message);
+            Assert(await WaitForProcessExitAsync(childId, TimeSpan.FromSeconds(3)),
+                "The differently named child remained running after its profile was deactivated.");
+        }
+        finally
+        {
+            if (childId > 0)
+            {
+                try
+                {
+                    using var child = Process.GetProcessById(childId);
+                    if (!child.HasExited) child.Kill(entireProcessTree: true);
+                }
+                catch (ArgumentException) { }
+                catch (InvalidOperationException) { }
+                catch (Win32Exception) { }
+            }
         }
     }
 
