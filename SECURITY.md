@@ -12,4 +12,4 @@ Include the affected version, reproduction steps, expected impact, and any sugge
 
 ## Scope
 
-Sherpa Manager runs local applications and changes Windows display configuration at the user's request. Profiles are stored locally in `%APPDATA%\SherpaManager`. The application does not include telemetry, accounts, or network services.
+Sherpa Manager runs and optionally terminates local applications, calls the Windows display configuration API, and can validate and restore a captured NVIDIA Surround display grid at the user's request. Force termination is disabled by default and requires per-app opt-in. Implicit executable matching uses canonical paths; an explicitly entered process-name override is intentionally broader. Profiles and automatic recovery snapshots are stored locally in `%APPDATA%\SherpaManager`. The application does not include telemetry, accounts, or network services.

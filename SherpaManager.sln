@@ -5,6 +5,10 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SherpaManager", "src\SherpaManager.csproj", "{28E8517D-214C-4C55-9D87-44028BF9AB31}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SherpaManager.Tests", "tests\SherpaManager.Tests\SherpaManager.Tests.csproj", "{687AD4EA-0CB6-4C9E-908D-79C855E415A4}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WindowFixture", "tests\WindowFixture\WindowFixture.csproj", "{7166B4EA-A3B8-451D-8B6A-33DC96BE248F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -15,5 +19,13 @@ Global
 		{28E8517D-214C-4C55-9D87-44028BF9AB31}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{28E8517D-214C-4C55-9D87-44028BF9AB31}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{28E8517D-214C-4C55-9D87-44028BF9AB31}.Release|Any CPU.Build.0 = Release|Any CPU
+		{687AD4EA-0CB6-4C9E-908D-79C855E415A4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{687AD4EA-0CB6-4C9E-908D-79C855E415A4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{687AD4EA-0CB6-4C9E-908D-79C855E415A4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{687AD4EA-0CB6-4C9E-908D-79C855E415A4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7166B4EA-A3B8-451D-8B6A-33DC96BE248F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7166B4EA-A3B8-451D-8B6A-33DC96BE248F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7166B4EA-A3B8-451D-8B6A-33DC96BE248F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7166B4EA-A3B8-451D-8B6A-33DC96BE248F}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

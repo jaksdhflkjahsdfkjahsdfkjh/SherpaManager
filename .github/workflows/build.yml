@@ -28,3 +28,6 @@ jobs:
 
       - name: Build
         run: dotnet build SherpaManager.sln --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet run --project tests/SherpaManager.Tests/SherpaManager.Tests.csproj --configuration Release --no-build

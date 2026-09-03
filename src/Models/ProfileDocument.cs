@@ -4,7 +4,8 @@ namespace SherpaManager.Models;
 
 public sealed class ProfileDocument
 {
-    public int SchemaVersion { get; set; } = 1;
+    public int SchemaVersion { get; set; } = 4;
     public Guid? ActiveProfileId { get; set; }
+    public AppSettings Settings { get; set; } = new();
     public ObservableCollection<SwitchProfile> Profiles { get; set; } = [];
 }
