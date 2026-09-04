@@ -13,10 +13,11 @@ this file must all agree; the release workflow fails the build when they do not.
 
 ### Added
 
-- Global shortcuts. Each profile can claim a combination such as `Ctrl+Alt+I`
-  and be activated from anywhere in Windows. A combination another application
-  already owns, or one claimed by two profiles, is reported and skipped rather
-  than failing silently.
+- Global shortcuts. Click **Set shortcut** on a profile and press the keys you
+  want, such as Ctrl+Alt+W; the combination is recorded as you press it rather
+  than typed out. It then activates that profile from anywhere in Windows. A
+  combination another application already owns, or one claimed by two profiles,
+  is reported and skipped rather than failing silently.
 - `SherpaManager.exe --activate <profile>` switches by name, matched without
   case sensitivity. If Sherpa Manager is already running, the request is handed
   to the running copy instead of starting a second one that would fight it for

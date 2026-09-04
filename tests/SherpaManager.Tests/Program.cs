@@ -1455,6 +1455,27 @@ internal static class Program
         Assert(HotkeyDefinition.Canonicalize("  alt + ctrl + 5 ") == "Ctrl+Alt+5",
             "Canonicalize should tidy spacing and ordering.");
         Assert(HotkeyDefinition.Canonicalize("nonsense") is null, "Canonicalize should return null for bad input.");
+
+        // Keys captured from the keyboard must obey exactly the same rules as typed text.
+        Assert(HotkeyDefinition.TryFromInput(HotkeyModifiers.Control | HotkeyModifiers.Alt, 'W',
+            out var captured, out _), "Ctrl+Alt+W should be accepted from a key press.");
+        Assert(captured!.Text == "Ctrl+Alt+W", $"Expected 'Ctrl+Alt+W', got '{captured.Text}'.");
+        Assert(HotkeyDefinition.TryFromInput(HotkeyModifiers.Control | HotkeyModifiers.Alt, 0x70,
+            out var capturedFunction, out _), "Ctrl+Alt+F1 should be accepted from a key press.");
+        Assert(capturedFunction!.Text == "Ctrl+Alt+F1", $"Expected 'Ctrl+Alt+F1', got '{capturedFunction.Text}'.");
+        Assert(!HotkeyDefinition.TryFromInput(HotkeyModifiers.Shift, 'A', out _, out var capturedShiftError),
+            "Shift alone should be rejected from a key press too.");
+        Assert(capturedShiftError is not null && capturedShiftError.Contains("Ctrl", StringComparison.Ordinal),
+            "The rejection should name the modifiers that would work.");
+        Assert(!HotkeyDefinition.TryFromInput(HotkeyModifiers.Control, 0x09, out _, out _),
+            "Tab is not a key Sherpa can register.");
+
+        // Typed and captured paths must agree, or a shortcut could be accepted one
+        // way and rejected the other.
+        Assert(HotkeyDefinition.TryParse("Ctrl+Alt+W", out var typed, out _) &&
+               typed!.Text == captured.Text && typed.VirtualKey == captured.VirtualKey &&
+               typed.Modifiers == captured.Modifiers,
+            "Typing a shortcut and pressing it should produce the same definition.");
         return Task.CompletedTask;
     }
 

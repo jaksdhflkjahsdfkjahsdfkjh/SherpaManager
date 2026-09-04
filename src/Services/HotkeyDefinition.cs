@@ -56,15 +56,51 @@ public sealed record HotkeyDefinition(HotkeyModifiers Modifiers, uint VirtualKey
             return false;
         }
 
+        return TryFromInput(modifiers, virtualKey, out hotkey, out error);
+    }
+
+    /// <summary>
+    /// Builds a hotkey from keys the user actually pressed. Shares its rules with
+    /// <see cref="TryParse"/> so a captured and a typed shortcut can never disagree
+    /// about what is allowed.
+    /// </summary>
+    public static bool TryFromInput(HotkeyModifiers modifiers, uint virtualKey,
+        out HotkeyDefinition? hotkey, out string? error)
+    {
+        hotkey = null;
+        error = null;
+
+        if (!TryDescribeKey(virtualKey, out var keyName))
+        {
+            error = "That key cannot be used for a shortcut. Use A-Z, 0-9, or F1-F24.";
+            return false;
+        }
+
         // Shift alone is not enough: Windows would hand Sherpa ordinary typing.
         if ((modifiers & (HotkeyModifiers.Control | HotkeyModifiers.Alt | HotkeyModifiers.Windows)) == 0)
         {
-            error = $"'{text}' needs Ctrl, Alt, or Win so it does not capture ordinary typing.";
+            error = "Hold Ctrl, Alt, or Win as well, so the shortcut does not capture ordinary typing.";
             return false;
         }
 
         hotkey = new HotkeyDefinition(modifiers, virtualKey, Format(modifiers, keyName));
         return true;
+    }
+
+    private static bool TryDescribeKey(uint virtualKey, out string keyName)
+    {
+        if (virtualKey is >= 'A' and <= 'Z' or >= '0' and <= '9')
+        {
+            keyName = ((char)virtualKey).ToString();
+            return true;
+        }
+        if (virtualKey is >= 0x70 and <= 0x87) // VK_F1 .. VK_F24
+        {
+            keyName = "F" + (virtualKey - 0x70 + 1);
+            return true;
+        }
+        keyName = string.Empty;
+        return false;
     }
 
     /// <summary>Canonical text for storage and display, or null when unparseable.</summary>

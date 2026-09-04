@@ -114,7 +114,7 @@ Windows commonly hides `.url` and `.lnk` extensions. Sherpa resolves an unambigu
 
 A profile can be activated without opening the window.
 
-- **Global shortcut.** Give a profile a combination such as `Ctrl+Alt+I` in the profile editor. It works anywhere in Windows. The combination needs Ctrl, Alt, or Win so it cannot capture ordinary typing, and Sherpa tells you when another application already owns it or when two profiles claim the same one. Duplicating a profile deliberately does not copy its shortcut.
+- **Global shortcut.** Click **Set shortcut** in the profile editor and press the keys you want, such as Ctrl+Alt+W. The combination is captured as you press it. Esc cancels, Backspace clears, and **Clear** removes it. It needs Ctrl, Alt, or Win so it cannot capture ordinary typing. Sherpa tells you when another application already owns the combination or when two profiles claim the same one. Duplicating a profile deliberately does not copy its shortcut.
 - **Command line.** `SherpaManager.exe --activate "iRacing"` switches by name, matched without case sensitivity. `--help` lists the arguments.
 - **Desktop shortcut.** **Create desktop shortcut** in the profile editor writes a shortcut that runs the command above.
 - **Start with Windows.** A per-user startup entry, so it needs no administrator rights. Sherpa reads the registry rather than its own settings file, so removing the entry from Task Manager is reflected in Settings.

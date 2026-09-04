@@ -160,28 +160,27 @@
                         </StackPanel>
                     </Border>
 
-                    <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="10" Padding="20" Margin="0,0,0,22">
+                    <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="10" Padding="14,10" Margin="0,0,0,16">
                         <StackPanel>
-                            <TextBlock Text="QUICK SWITCHING" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource MutedTextBrush}"/>
-                            <TextBlock Text="Switch to this profile without opening Sherpa."
-                                       Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,6,0,0"/>
-                            <Grid Margin="0,14,0,0">
+                            <Grid>
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="175"/>
                                     <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Text="Global shortcut" Foreground="{StaticResource MutedTextBrush}"
-                                           VerticalAlignment="Center" Margin="0,0,12,0"/>
-                                <TextBox Grid.Column="1" MaxLength="40" LostFocus="Hotkey_LostFocus"
-                                         Text="{Binding Hotkey, UpdateSourceTrigger=PropertyChanged}"
-                                         ToolTip="For example Ctrl+Alt+I. Leave it empty for no shortcut."/>
-                                <TextBlock x:Name="HotkeyStatusText" Grid.Column="2" VerticalAlignment="Center"
-                                           Margin="12,0,0,0" TextWrapping="Wrap" FontSize="11"
-                                           Foreground="{StaticResource MutedTextBrush}"/>
+                                <TextBlock Text="QUICK SWITCHING" FontSize="11" FontWeight="SemiBold"
+                                           VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}"/>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                    <Button x:Name="HotkeyButton" MinWidth="150" Click="HotkeyButton_Click"
+                                            PreviewKeyDown="HotkeyButton_PreviewKeyDown"
+                                            LostFocus="HotkeyButton_LostFocus"
+                                            ToolTip="Click, then press the keys you want, such as Ctrl+Alt+W. Esc cancels, Backspace clears."/>
+                                    <Button Content="Clear" Click="ClearHotkey_Click" Margin="6,0,0,0"/>
+                                    <Button Content="Desktop shortcut" Click="CreateShortcut_Click" Margin="12,0,0,0"
+                                            ToolTip="Create a desktop shortcut that activates this profile."/>
+                                </StackPanel>
                             </Grid>
-                            <Button Content="Create desktop shortcut" Click="CreateShortcut_Click"
-                                    HorizontalAlignment="Left" Margin="0,14,0,0"/>
+                            <TextBlock x:Name="HotkeyStatusText" Visibility="Collapsed" Margin="0,8,0,0"
+                                       TextWrapping="Wrap" FontSize="11" Foreground="{StaticResource MutedTextBrush}"/>
                         </StackPanel>
                     </Border>
 

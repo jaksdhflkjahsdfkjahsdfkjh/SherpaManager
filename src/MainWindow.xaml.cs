@@ -45,6 +45,7 @@ public partial class MainWindow : Window
     private WindowState _lastVisibleState = WindowState.Normal;
     private SwitchProfile? _profileBeforeSettings;
     private bool _startupActivationHandled;
+    private bool _capturingHotkey;
 
     /// <summary>Profile name requested on the command line, applied once profiles have loaded.</summary>
     public string? PendingActivationRequest { get; set; }
@@ -126,6 +127,7 @@ public partial class MainWindow : Window
         StartWithWindowsCheckBox.IsChecked = _document.Settings.StartWithWindows;
         RebuildStartupProfileCombo();
         _loadingSettings = false;
+        UpdateHotkeyButton();
         ApplyHotkeys();
         try { await _store.SaveAsync(_document); }
         catch (Exception ex) { ShowError("Could not save profiles", ex); }
@@ -222,29 +224,107 @@ public partial class MainWindow : Window
         if (failures.Count > 0) StatusText.Text = string.Join("  ", failures);
     }
 
-    private async void Hotkey_LostFocus(object sender, RoutedEventArgs e)
+    private void HotkeyButton_Click(object sender, RoutedEventArgs e)
     {
-        if (SelectedProfile is not { } profile) return;
-        var text = profile.Hotkey?.Trim() ?? string.Empty;
+        if (SelectedProfile is null) return;
+        _capturingHotkey = true;
+        HotkeyButton.Content = "Press keys…";
+        SetHotkeyStatus("Press a combination using Ctrl, Alt, or Win. Esc cancels.");
+    }
 
-        if (text.Length == 0)
+    private async void HotkeyButton_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (!_capturingHotkey || SelectedProfile is not { } profile) return;
+
+        // With Alt held, WPF reports Key.System and puts the real key in SystemKey.
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+
+        // Let Tab move focus so the field is never a keyboard trap.
+        if (key == Key.Tab)
         {
-            profile.Hotkey = string.Empty;
-            HotkeyStatusText.Text = string.Empty;
-        }
-        else if (HotkeyDefinition.TryParse(text, out var parsed, out var error))
-        {
-            profile.Hotkey = parsed!.Text;
-            HotkeyStatusText.Text = string.Empty;
-        }
-        else
-        {
-            HotkeyStatusText.Text = error ?? "That is not a shortcut Sherpa can register.";
+            EndHotkeyCapture();
             return;
         }
 
+        e.Handled = true;
+
+        // Ignore the modifiers themselves; wait for the key they qualify.
+        if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt
+            or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin or Key.System or Key.None)
+            return;
+
+        if (key == Key.Escape)
+        {
+            EndHotkeyCapture();
+            SetHotkeyStatus(null);
+            return;
+        }
+
+        if (key is Key.Back or Key.Delete)
+        {
+            await SetHotkeyAsync(profile, string.Empty, "Shortcut cleared.");
+            return;
+        }
+
+        var modifiers = HotkeyModifiers.None;
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) modifiers |= HotkeyModifiers.Control;
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Alt)) modifiers |= HotkeyModifiers.Alt;
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)) modifiers |= HotkeyModifiers.Shift;
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Windows)) modifiers |= HotkeyModifiers.Windows;
+
+        var virtualKey = (uint)KeyInterop.VirtualKeyFromKey(key);
+        if (!HotkeyDefinition.TryFromInput(modifiers, virtualKey, out var hotkey, out var error))
+        {
+            // Stay in capture mode so the next attempt does not need another click.
+            SetHotkeyStatus(error);
+            return;
+        }
+
+        await SetHotkeyAsync(profile, hotkey!.Text, null);
+    }
+
+    private async Task SetHotkeyAsync(SwitchProfile profile, string hotkey, string? status)
+    {
+        profile.Hotkey = hotkey;
+        EndHotkeyCapture();
+        SetHotkeyStatus(status);
         ApplyHotkeys();
         await SaveAsync();
+    }
+
+    private async void ClearHotkey_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedProfile is not { } profile) return;
+        if (string.IsNullOrEmpty(profile.Hotkey)) return;
+        await SetHotkeyAsync(profile, string.Empty, "Shortcut cleared.");
+    }
+
+    private void HotkeyButton_LostFocus(object sender, RoutedEventArgs e) => EndHotkeyCapture();
+
+    /// <summary>
+    /// Writes the shortcut status line, collapsing it when empty so the card stays
+    /// one row tall unless there is something to say.
+    /// </summary>
+    private void SetHotkeyStatus(string? text)
+    {
+        HotkeyStatusText.Text = text ?? string.Empty;
+        HotkeyStatusText.Visibility = string.IsNullOrWhiteSpace(text)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+    }
+
+    private void EndHotkeyCapture()
+    {
+        _capturingHotkey = false;
+        UpdateHotkeyButton();
+    }
+
+    private void UpdateHotkeyButton()
+    {
+        if (_capturingHotkey) return;
+        HotkeyButton.Content = SelectedProfile is { Hotkey.Length: > 0 } profile
+            ? profile.Hotkey
+            : "Set shortcut…";
     }
 
     private void CreateShortcut_Click(object sender, RoutedEventArgs e)
@@ -706,6 +786,7 @@ public partial class MainWindow : Window
     private async void ProfilesList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (SelectedProfile is { } selectedProfile) _profileBeforeSettings = selectedProfile;
+        EndHotkeyCapture();
         if (!IsLoaded || _openingSettings || SelectedProfile is null) return;
         MainTabs.SelectedIndex = 0;
         await SaveAsync();
