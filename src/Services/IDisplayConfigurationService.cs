@@ -4,6 +4,9 @@ namespace SherpaManager.Services;
 
 public interface IDisplayConfigurationService
 {
+    /// <summary>Reads the live topology. Never changes anything.</summary>
+    DisplaySnapshot Capture();
+
     Task<DisplayRestoreResult> RestoreAsync(DisplaySnapshot snapshot, NvidiaSurroundMode surroundMode,
         CancellationToken cancellationToken = default);
 

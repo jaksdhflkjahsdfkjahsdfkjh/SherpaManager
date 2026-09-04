@@ -19,6 +19,7 @@ public partial class MainWindow : Window
     private readonly DisplayConfigurationService _displays;
     private readonly ProcessService _processes;
     private readonly ProfileActivationService _activator;
+    private readonly ActivationPreflightService _preflight;
     private readonly System.Drawing.Icon? _applicationIcon;
     private readonly Forms.NotifyIcon _trayIcon;
     private readonly HashSet<SwitchProfile> _observedProfiles = [];
@@ -54,6 +55,7 @@ public partial class MainWindow : Window
             new SurroundModeOption(NvidiaSurroundMode.RequireDisabled, "Require disabled")
         };
         _activator = new ProfileActivationService(_displays, _processes, _diagnostics);
+        _preflight = new ActivationPreflightService(_displays, _processes);
         _processes.PendingCloseCompleted += ProcessService_PendingCloseCompleted;
         _processes.PendingMinimizationCompleted += ProcessService_PendingMinimizationCompleted;
         _applicationIcon = TryLoadApplicationIcon();
@@ -104,6 +106,7 @@ public partial class MainWindow : Window
         _loadingSettings = true;
         CloseToTrayCheckBox.IsChecked = _document.Settings.MinimizeToTrayOnClose;
         ConfirmDisplayChangesCheckBox.IsChecked = _document.Settings.ConfirmDisplayChanges;
+        ShowActivationPreviewCheckBox.IsChecked = _document.Settings.ShowActivationPreview;
         _loadingSettings = false;
         try { await _store.SaveAsync(_document); }
         catch (Exception ex) { ShowError("Could not save profiles", ex); }
@@ -175,9 +178,48 @@ public partial class MainWindow : Window
         if (SelectedProfile is { } profile) await ActivateProfileAsync(profile);
     }
 
+    /// <summary>
+    /// Shows what the switch would do and returns whether to go ahead. A preview
+    /// that cannot be produced never blocks activation; the switch itself still
+    /// validates everything and can still roll back.
+    /// </summary>
+    private async Task<bool> ConfirmActivationAsync(SwitchProfile profile)
+    {
+        if (!_document.Settings.ShowActivationPreview) return true;
+
+        ActivationPreflight preflight;
+        var cancellationToken = BeginBusyOperation($"Checking what switching to {profile.Name} would do…");
+        try
+        {
+            preflight = await Task.Run(() => _preflight.Build(_document, profile), cancellationToken);
+        }
+        catch (OperationCanceledException) { return false; }
+        catch (Exception exception)
+        {
+            _diagnostics.Error("activation.preview.failed", exception,
+                new Dictionary<string, object?> { ["targetProfileId"] = profile.Id });
+            return true;
+        }
+        finally { EndBusyOperation(); }
+
+        EnsureWindowIsVisible();
+        var preview = new ActivationPreflightWindow(preflight) { Owner = this };
+        preview.ShowDialog();
+
+        if (preview.SkipFuturePreviews)
+        {
+            _document.Settings.ShowActivationPreview = false;
+            ShowActivationPreviewCheckBox.IsChecked = false;
+            await SaveAsync();
+        }
+
+        return preview.Proceed;
+    }
+
     private async Task ActivateProfileAsync(SwitchProfile profile)
     {
         if (_isBusy) return;
+        if (!await ConfirmActivationAsync(profile)) return;
         _inFlightTargetIdentities.Clear();
         foreach (var app in profile.Applications.Where(app => app.Enabled))
         {
@@ -538,6 +580,7 @@ public partial class MainWindow : Window
         if (_loadingSettings || !IsLoaded) return;
         _document.Settings.MinimizeToTrayOnClose = CloseToTrayCheckBox.IsChecked == true;
         _document.Settings.ConfirmDisplayChanges = ConfirmDisplayChangesCheckBox.IsChecked == true;
+        _document.Settings.ShowActivationPreview = ShowActivationPreviewCheckBox.IsChecked == true;
         await SaveAsync();
     }
 

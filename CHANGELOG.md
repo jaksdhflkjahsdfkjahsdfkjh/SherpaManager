@@ -11,6 +11,18 @@ this file must all agree; the release workflow fails the build when they do not.
 
 ## Unreleased
 
+### Added
+
+- An activation preview. Before a profile switch runs, Sherpa shows what it
+  would do: monitors that will be enabled or disabled, resolution, refresh
+  rate, rotation and primary-display changes, the NVIDIA Surround transition,
+  and which applications will start, stay running, or be closed. Missing
+  executables and missing working directories are reported as problems before
+  anything is applied rather than as warnings afterwards.
+- **Settings -> Show what a profile switch will change before it runs**, on by
+  default, along with a **Do not show this again** option in the preview
+  itself.
+
 ### Changed
 
 - The bug report template now asks for the **Settings -> Copy diagnostics**

@@ -52,7 +52,13 @@ internal static class Program
             ("Closing a launcher also closes a differently named child", TestDifferentlyNamedLauncherChildCloseAsync),
             ("Closing a launcher before handoff does not suppress relaunch", TestPreHandoffLauncherCloseAsync),
             ("A delayed unresponsive child is force-closed automatically", TestDelayedCloseOutcomeAsync),
-            ("Same-named executables are matched by exact path", TestSameNamedExecutableIsolationAsync)
+            ("Same-named executables are matched by exact path", TestSameNamedExecutableIsolationAsync),
+            ("Activation preview reports enabled, disabled, and changed monitors", TestPreviewDisplayChangesAsync),
+            ("Activation preview separates apps that start, stay, and close", TestPreviewApplicationPlanAsync),
+            ("Activation preview reports unusable applications as problems", TestPreviewApplicationProblemsAsync),
+            ("Activation preview describes the Surround transition", TestPreviewSurroundAsync),
+            ("Activation preview changes nothing", TestPreviewIsReadOnlyAsync),
+            ("Activation preview window renders every item", TestPreviewWindowRendersAsync)
         };
 
         var selectedTests = tests.ToList();
@@ -1383,6 +1389,294 @@ internal static class Program
         if (!condition) throw new InvalidOperationException(message);
     }
 
+    private static DisplayTargetSnapshot Monitor(string identity, string name, uint width, uint height,
+        uint refreshHz = 60, int x = 0, int y = 0, uint rotation = 1) => new()
+    {
+        Identity = identity,
+        FriendlyName = name,
+        SourceWidth = width,
+        SourceHeight = height,
+        RefreshNumerator = refreshHz,
+        RefreshDenominator = 1,
+        SourceX = x,
+        SourceY = y,
+        Rotation = rotation
+    };
+
+    private static (ProfileDocument Document, SwitchProfile Target, FakeProcessService Processes,
+        FakeDisplayConfigurationService Displays) PreviewFixture()
+    {
+        var processes = new FakeProcessService();
+        var displays = new FakeDisplayConfigurationService(processes.Events);
+        var target = new SwitchProfile { Name = "iRacing" };
+        var document = new ProfileDocument { Profiles = { target } };
+        return (document, target, processes, displays);
+    }
+
+    private static IReadOnlyList<PreflightItem> ItemsIn(ActivationPreflight preflight, string sectionPrefix) =>
+        preflight.Sections
+            .Where(section => section.Title.StartsWith(sectionPrefix, StringComparison.OrdinalIgnoreCase))
+            .SelectMany(section => section.Items)
+            .ToList();
+
+    private static bool Mentions(IEnumerable<PreflightItem> items, PreflightSeverity severity,
+        params string[] fragments) =>
+        items.Any(item => item.Severity == severity &&
+            fragments.All(fragment => item.Title.Contains(fragment, StringComparison.OrdinalIgnoreCase)));
+
+    private static Task TestPreviewDisplayChangesAsync()
+    {
+        var (document, target, processes, displays) = PreviewFixture();
+        displays.CurrentSnapshot = new DisplaySnapshot
+        {
+            ActiveTargets =
+            [
+                Monitor("work-1", "Dell U2720Q", 3840, 2160),
+                Monitor("side-1", "Dell P2419H", 1920, 1080, x: 3840)
+            ]
+        };
+        target.Display = new DisplaySnapshot
+        {
+            ActiveTargets =
+            [
+                Monitor("work-1", "Dell U2720Q", 2560, 1440, refreshHz: 120),
+                Monitor("sim-1", "LG 27GL850", 2560, 1440, refreshHz: 144, x: 2560)
+            ]
+        };
+
+        var preflight = new ActivationPreflightService(displays, processes).Build(document, target);
+        var items = ItemsIn(preflight, "Displays");
+
+        Assert(Mentions(items, PreflightSeverity.Info, "LG 27GL850", "Enable"),
+            "A monitor only in the target layout should be reported as being enabled.");
+        Assert(Mentions(items, PreflightSeverity.Caution, "Dell P2419H", "Disable"),
+            "A monitor dropped by the target layout should be a caution, not a silent change.");
+        Assert(items.Any(item => item.Title.Contains("Dell U2720Q", StringComparison.Ordinal) &&
+                                 item.Title.Contains("3840", StringComparison.Ordinal) &&
+                                 item.Title.Contains("2560", StringComparison.Ordinal) &&
+                                 item.Title.Contains("120", StringComparison.Ordinal)),
+            "A monitor kept by both layouts should report its resolution and refresh change.");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestPreviewApplicationPlanAsync()
+    {
+        var (document, target, processes, displays) = PreviewFixture();
+        var previous = new SwitchProfile { Name = "Work" };
+        previous.Applications.Add(new LaunchApplication { Name = "Teams", Path = @"C:\apps\teams.exe" });
+        previous.Applications.Add(new LaunchApplication
+        {
+            Name = "Password manager", Path = @"C:\apps\vault.exe", CloseOnDeactivate = false
+        });
+        document.Profiles.Add(previous);
+        document.ActiveProfileId = previous.Id;
+
+        target.Applications.Add(new LaunchApplication { Name = "iRacing", Path = @"C:\sim\iracing.exe" });
+        target.Applications.Add(new LaunchApplication { Name = "Crew Chief", Path = @"C:\sim\crew.exe" });
+
+        processes.RunningPaths.Add(@"C:\apps\teams.exe");
+        processes.RunningPaths.Add(@"C:\apps\vault.exe");
+        processes.RunningPaths.Add(@"C:\sim\crew.exe");
+
+        var preflight = new ActivationPreflightService(displays, processes).Build(document, target);
+        var closing = ItemsIn(preflight, "Applications in Work");
+        var starting = ItemsIn(preflight, "Applications in iRacing");
+
+        Assert(Mentions(closing, PreflightSeverity.Caution, "Close", "Teams"),
+            "A running app from the previous profile with Close on switch should be reported as closing.");
+        Assert(Mentions(closing, PreflightSeverity.Info, "Password manager", "stays running"),
+            "An app with Close on switch disabled should be reported as staying open.");
+        Assert(Mentions(starting, PreflightSeverity.Info, "Start", "iRacing"),
+            "An app that is not running should be reported as starting.");
+        Assert(Mentions(starting, PreflightSeverity.Info, "Crew Chief", "already running"),
+            "An app that is already running should not be reported as starting.");
+        Assert(!preflight.HasProblems, "A healthy plan should report no problems.");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestPreviewApplicationProblemsAsync()
+    {
+        var (document, target, processes, displays) = PreviewFixture();
+        processes.ThrowOnResolvePath = @"C:\sim\missing.exe";
+        target.Applications.Add(new LaunchApplication { Name = "Missing", Path = @"C:\sim\missing.exe" });
+        target.Applications.Add(new LaunchApplication
+        {
+            Name = "Bad working directory",
+            Path = @"C:\sim\ok.exe",
+            WorkingDirectory = Path.Combine(Path.GetTempPath(), "SherpaManager.Tests", Guid.NewGuid().ToString("N"))
+        });
+
+        var preflight = new ActivationPreflightService(displays, processes).Build(document, target);
+        var items = ItemsIn(preflight, "Applications in iRacing");
+
+        Assert(Mentions(items, PreflightSeverity.Problem, "Missing", "cannot be found"),
+            "An unresolvable executable should be a problem, not a silent failure at switch time.");
+        Assert(Mentions(items, PreflightSeverity.Problem, "Bad working directory", "working directory"),
+            "A missing working directory should be reported before the switch starts.");
+        Assert(preflight.ProblemCount == 2, $"Expected two problems, got {preflight.ProblemCount}.");
+        Assert(preflight.HasProblems, "A preview with problems should say so.");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestPreviewSurroundAsync()
+    {
+        var (document, target, processes, displays) = PreviewFixture();
+        target.NvidiaSurroundMode = NvidiaSurroundMode.RequireEnabled;
+        displays.CurrentSnapshot = new DisplaySnapshot
+        {
+            NvidiaSurround = new NvidiaSurroundSnapshot
+            {
+                ApiAvailable = true, StatusKnown = true, Enabled = false, IsPossible = true
+            }
+        };
+
+        var service = new ActivationPreflightService(displays, processes);
+        var items = ItemsIn(service.Build(document, target), "NVIDIA Surround");
+        Assert(Mentions(items, PreflightSeverity.Caution, "Surround will be turned on"),
+            "A Surround transition should be flagged as a change needing attention.");
+
+        displays.CurrentSnapshot = new DisplaySnapshot
+        {
+            NvidiaSurround = new NvidiaSurroundSnapshot { ApiAvailable = false, Description = "no NVAPI" }
+        };
+        var unavailable = ItemsIn(service.Build(document, target), "NVIDIA Surround");
+        Assert(Mentions(unavailable, PreflightSeverity.Problem, "NVAPI is unavailable"),
+            "Requiring Surround without NVAPI should be a problem the user sees before switching.");
+
+        target.NvidiaSurroundMode = NvidiaSurroundMode.Ignore;
+        var ignored = ItemsIn(service.Build(document, target), "NVIDIA Surround");
+        Assert(Mentions(ignored, PreflightSeverity.Info, "will not be managed"),
+            "Do not manage should say plainly that Surround is left alone.");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestPreviewIsReadOnlyAsync()
+    {
+        var (document, target, processes, displays) = PreviewFixture();
+        var previous = new SwitchProfile { Name = "Work" };
+        previous.Applications.Add(new LaunchApplication { Name = "Teams", Path = @"C:\apps\teams.exe" });
+        document.Profiles.Add(previous);
+        document.ActiveProfileId = previous.Id;
+        target.Applications.Add(new LaunchApplication { Name = "iRacing", Path = @"C:\sim\iracing.exe" });
+        target.Display = new DisplaySnapshot { ActiveTargets = [Monitor("sim-1", "LG 27GL850", 2560, 1440)] };
+        processes.RunningPaths.Add(@"C:\apps\teams.exe");
+
+        new ActivationPreflightService(displays, processes).Build(document, target);
+
+        Assert(processes.Events.Count == 0,
+            $"The preview must not launch or close anything, but recorded: {string.Join(", ", processes.Events)}");
+        Assert(processes.Launched.Count == 0 && processes.Closed.Count == 0 && processes.Forced.Count == 0,
+            "The preview must not touch process lifecycle.");
+        Assert(displays.RecoveryRestoreCalls == 0 && displays.ConfirmationRestoreCalls == 0,
+            "The preview must not apply or roll back any display layout.");
+        Assert(document.ActiveProfileId == previous.Id, "The preview must not change the active profile.");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The preview is only useful if the user can actually read it, so this
+    /// builds the real window and confirms every predicted item reached the
+    /// visual tree with no data binding errors.
+    /// </summary>
+    private static Task TestPreviewWindowRendersAsync()
+    {
+        var (document, target, processes, displays) = PreviewFixture();
+        var previous = new SwitchProfile { Name = "Work" };
+        previous.Applications.Add(new LaunchApplication { Name = "Teams", Path = @"C:\apps\teams.exe" });
+        document.Profiles.Add(previous);
+        document.ActiveProfileId = previous.Id;
+        processes.RunningPaths.Add(@"C:\apps\teams.exe");
+        processes.ThrowOnResolvePath = @"C:\sim\missing.exe";
+        target.Applications.Add(new LaunchApplication { Name = "Missing", Path = @"C:\sim\missing.exe" });
+        target.Applications.Add(new LaunchApplication { Name = "iRacing", Path = @"C:\sim\iracing.exe" });
+        displays.CurrentSnapshot = new DisplaySnapshot
+        {
+            ActiveTargets = [Monitor("side-1", "Dell P2419H", 1920, 1080)]
+        };
+        target.Display = new DisplaySnapshot
+        {
+            ActiveTargets = [Monitor("sim-1", "LG 27GL850", 2560, 1440, refreshHz: 144)]
+        };
+
+        var preflight = new ActivationPreflightService(displays, processes).Build(document, target);
+        var expected = preflight.AllItems.Select(item => item.Title).ToList();
+
+        Exception? failure = null;
+        var bindingErrors = new List<string>();
+        var rendered = new List<string>();
+
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                if (System.Windows.Application.Current is null)
+                {
+                    var app = new App();
+                    app.InitializeComponent();
+                }
+
+                var listener = new BindingErrorListener(bindingErrors);
+                System.Diagnostics.PresentationTraceSources.Refresh();
+                System.Diagnostics.PresentationTraceSources.DataBindingSource.Listeners.Add(listener);
+                System.Diagnostics.PresentationTraceSources.DataBindingSource.Switch.Level =
+                    System.Diagnostics.SourceLevels.Error | System.Diagnostics.SourceLevels.Warning;
+
+                var window = new ActivationPreflightWindow(preflight)
+                {
+                    ShowActivated = false,
+                    Opacity = 0,
+                    WindowStartupLocation = System.Windows.WindowStartupLocation.Manual,
+                    Left = -32000,
+                    Top = -32000
+                };
+                try
+                {
+                    window.Show();
+                    window.UpdateLayout();
+                    CollectText(window, rendered);
+                }
+                finally
+                {
+                    window.Close();
+                    System.Diagnostics.PresentationTraceSources.DataBindingSource.Listeners.Remove(listener);
+                }
+            }
+            catch (Exception exception) { failure = exception; }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join(TimeSpan.FromSeconds(60));
+
+        if (failure is not null) throw new InvalidOperationException("The preview window failed to render.", failure);
+        Assert(bindingErrors.Count == 0,
+            $"The preview window reported data binding errors: {string.Join(" | ", bindingErrors)}");
+        Assert(expected.Count > 0, "The fixture should produce at least one preview item.");
+
+        var missing = expected.Where(title => !rendered.Contains(title)).ToList();
+        Assert(missing.Count == 0,
+            $"These preview items never reached the window: {string.Join(" | ", missing)}");
+        return Task.CompletedTask;
+    }
+
+    private static void CollectText(System.Windows.DependencyObject root, List<string> into)
+    {
+        if (root is System.Windows.Controls.TextBlock text && !string.IsNullOrWhiteSpace(text.Text))
+            into.Add(text.Text);
+        var count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(root);
+        for (var index = 0; index < count; index++)
+            CollectText(System.Windows.Media.VisualTreeHelper.GetChild(root, index), into);
+    }
+
+    private sealed class BindingErrorListener(List<string> errors) : System.Diagnostics.TraceListener
+    {
+        public override void Write(string? message) { }
+
+        public override void WriteLine(string? message)
+        {
+            if (!string.IsNullOrWhiteSpace(message)) errors.Add(message);
+        }
+    }
+
     private sealed class FakeProcessService : IProcessService
     {
         public List<string> Events { get; } = [];
@@ -1395,9 +1689,15 @@ internal static class Program
         public ProcessCloseResult CloseResult { get; set; } =
             new(ProcessCloseStatus.ClosedGracefully, 1, "closed");
         public string? ThrowOnLaunchPath { get; set; }
+        public string? ThrowOnResolvePath { get; set; }
 
-        public ResolvedLaunchTarget Resolve(LaunchApplication app) =>
-            new(app.Path, app.Path, Path.GetFileNameWithoutExtension(app.Path), "fake:" + app.Path.ToUpperInvariant(), false);
+        public ResolvedLaunchTarget Resolve(LaunchApplication app)
+        {
+            if (app.Path.Equals(ThrowOnResolvePath, StringComparison.OrdinalIgnoreCase))
+                throw new FileNotFoundException($"Could not find {app.Name}.", app.Path);
+            return new(app.Path, app.Path, Path.GetFileNameWithoutExtension(app.Path),
+                "fake:" + app.Path.ToUpperInvariant(), false);
+        }
         public void Validate(LaunchApplication app) { }
         public string GetIdentityKey(LaunchApplication app) => Resolve(app).IdentityKey;
         public void CancelPendingClose(LaunchApplication app) { }
@@ -1439,6 +1739,11 @@ internal static class Program
         public int ConfirmationRestoreCalls { get; private set; }
         public bool ConfirmOnlyWhenVerificationChanged { get; private set; }
         public bool VerificationEnvironmentChanged { get; set; } = true;
+        public DisplaySnapshot CurrentSnapshot { get; set; } = new();
+        public Exception? CaptureFailure { get; set; }
+
+        public DisplaySnapshot Capture() =>
+            CaptureFailure is null ? CurrentSnapshot : throw CaptureFailure;
 
         public Task<DisplayRestoreResult> RestoreAsync(DisplaySnapshot snapshot,
             NvidiaSurroundMode surroundMode, CancellationToken cancellationToken = default)

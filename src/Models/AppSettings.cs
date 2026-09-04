@@ -4,6 +4,7 @@ public sealed class AppSettings : ObservableObject
 {
     private bool _minimizeToTrayOnClose = true;
     private bool _confirmDisplayChanges = true;
+    private bool _showActivationPreview = true;
 
     public bool MinimizeToTrayOnClose
     {
@@ -15,5 +16,11 @@ public sealed class AppSettings : ObservableObject
     {
         get => _confirmDisplayChanges;
         set => SetProperty(ref _confirmDisplayChanges, value);
+    }
+
+    public bool ShowActivationPreview
+    {
+        get => _showActivationPreview;
+        set => SetProperty(ref _showActivationPreview, value);
     }
 }

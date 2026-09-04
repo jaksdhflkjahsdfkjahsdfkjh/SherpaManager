@@ -119,6 +119,10 @@ Windows commonly hides `.url` and `.lnk` extensions. Sherpa resolves an unambigu
 
 ## Display safety and recovery
 
+Activating a profile is the most disruptive thing Sherpa does, so it shows a preview first. The preview lists the monitors that will be enabled and disabled, resolution, refresh-rate, rotation and primary-display changes, whether NVIDIA Surround will be turned on or off, and which applications will start, stay running, or be closed. Entries that cannot work — an executable that is no longer where the profile expects it, or a working directory that no longer exists — are reported as problems before anything is applied, instead of as warnings once the switch is already under way.
+
+Items needing attention are highlighted: closing an application can lose unsaved work, and disabling a monitor removes it from the Windows desktop. The preview only reads the current state; it never changes displays or processes. You can still continue when it reports problems, in which case those entries are skipped. Turn the preview off in **Settings**, or with **Do not show this again** in the preview itself.
+
 Before every new display change, Sherpa saves `%APPDATA%\SherpaManager\last-display-recovery.json`. It also writes the immediate pre-change layout to `display-transaction-recovery.json` and creates a small `display-transaction.json` marker before touching the display state. The marker is removed only after the requested layout or its automatic rollback has been verified. If Sherpa, Windows, or the graphics driver stops during that interval, Sherpa offers to restore the pre-change layout on its next launch. Profile and normal display-recovery saves retain `.bak` copies, and Sherpa can load those copies if the primary JSON is damaged. **Restore last** does not overwrite the safe snapshot it is restoring.
 
 Windows adapter and target IDs can change after a reboot or driver restart. Sherpa remaps them using the saved monitor device identity before applying a layout and fails closed when an identity is missing or ambiguous. Recapture both profiles after moving a monitor to another GPU or port, changing cabling, or replacing display hardware.

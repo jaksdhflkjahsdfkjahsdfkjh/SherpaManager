@@ -275,6 +275,9 @@
                                     <CheckBox x:Name="ConfirmDisplayChangesCheckBox"
                                               Content="Show a 10-second rollback timer the first time a new layout is applied"
                                               Checked="SettingsCheckBox_Changed" Unchecked="SettingsCheckBox_Changed"/>
+                                    <CheckBox x:Name="ShowActivationPreviewCheckBox" Margin="0,10,0,0"
+                                              Content="Show what a profile switch will change before it runs"
+                                              Checked="SettingsCheckBox_Changed" Unchecked="SettingsCheckBox_Changed"/>
                                 </StackPanel>
                                 <Button Grid.Column="1" Content="Open profile file" Click="OpenProfileFile_Click"
                                         VerticalAlignment="Center" Margin="24,0,0,0"/>
