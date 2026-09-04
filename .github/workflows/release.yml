@@ -1,0 +1,211 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to package, without the leading v (for example 0.4.4). Manual runs package only; they do not create a GitHub release.'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Package x64 release
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
+            $version = $env:INPUT_VERSION.Trim()
+          } else {
+            $version = $env:REF_NAME -replace '^v', ''
+          }
+
+          if ($version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
+            throw "Version '$version' is not in the expected N.N.N or N.N.N.N form."
+          }
+
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Packaging version $version"
+
+      - name: Verify project version matches
+        shell: pwsh
+        env:
+          EXPECTED_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expected = $env:EXPECTED_VERSION
+          $props = [xml](Get-Content -Raw Directory.Build.props)
+          $declared = ($props.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1) -as [string]
+
+          if ([string]::IsNullOrWhiteSpace($declared)) {
+            throw "No <Version> element found in Directory.Build.props."
+          }
+          if ($declared.Trim() -ne $expected) {
+            throw "Version mismatch: Directory.Build.props declares '$($declared.Trim())' but this release is '$expected'. Bump the project version and the CHANGELOG before tagging."
+          }
+
+          Write-Host "Project version $declared matches."
+
+      - name: Restore
+        run: dotnet restore SherpaManager.sln
+
+      - name: Build
+        run: dotnet build SherpaManager.sln --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet run --project tests/SherpaManager.Tests/SherpaManager.Tests.csproj --configuration Release --no-build
+
+      - name: Publish framework-dependent build
+        run: >
+          dotnet publish src/SherpaManager.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained false
+          --output build/publish/framework-dependent
+
+      - name: Publish self-contained build
+        run: >
+          dotnet publish src/SherpaManager.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          --output build/publish/self-contained
+
+      - name: Verify published executables are x64
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($dir in @('framework-dependent', 'self-contained')) {
+            $exe = "build/publish/$dir/SherpaManager.exe"
+            if (-not (Test-Path $exe)) { throw "Missing $exe" }
+
+            # The PE machine type lives in the COFF header, found via the offset at 0x3C.
+            $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $exe))
+            $peOffset = [System.BitConverter]::ToInt32($bytes, 0x3C)
+            $machine = [System.BitConverter]::ToUInt16($bytes, $peOffset + 4)
+            if ($machine -ne 0x8664) {
+              throw ("{0} has PE machine type 0x{1:X4}; expected 0x8664 (x64)." -f $exe, $machine)
+            }
+
+            Write-Host "$exe is x64."
+          }
+
+      - name: Create archives and checksums
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:VERSION
+          New-Item -ItemType Directory -Force -Path build/artifacts | Out-Null
+
+          $archives = @(
+            @{ Source = 'build/publish/framework-dependent'; Name = "SherpaManager-v$version-win-x64.zip" }
+            @{ Source = 'build/publish/self-contained';      Name = "SherpaManager-v$version-win-x64-self-contained.zip" }
+          )
+
+          foreach ($archive in $archives) {
+            $destination = Join-Path 'build/artifacts' $archive.Name
+            Compress-Archive -Path (Join-Path $archive.Source '*') -DestinationPath $destination -Force
+            Write-Host "Created $destination"
+          }
+
+          # sha256sum-compatible format: hash, two spaces, file name.
+          $checksums = Get-ChildItem build/artifacts -Filter *.zip |
+            Sort-Object Name |
+            ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name }
+
+          Set-Content -Path 'build/artifacts/SHA256SUMS.txt' -Value $checksums -Encoding ascii
+          Get-Content 'build/artifacts/SHA256SUMS.txt' | Write-Host
+
+      - name: Extract release notes
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:VERSION
+          $changelog = Get-Content -Raw CHANGELOG.md
+          $pattern = '(?ms)^##\s+' + [regex]::Escape($version) + '\s*$(.*?)(?=^##\s|\z)'
+          $match = [regex]::Match($changelog, $pattern)
+
+          if ($match.Success -and $match.Groups[1].Value.Trim()) {
+            $body = $match.Groups[1].Value.Trim()
+          } else {
+            Write-Warning "No '## $version' section found in CHANGELOG.md; using a generic body."
+            $body = 'See CHANGELOG.md for the changes in this release.'
+          }
+
+          $verify = @(
+            ''
+            ''
+            '## Verifying a download'
+            ''
+            'Compare the SHA-256 of the downloaded archive against `SHA256SUMS.txt`:'
+            ''
+            '```powershell'
+            "Get-FileHash .\SherpaManager-v$version-win-x64.zip -Algorithm SHA256"
+            '```'
+          ) -join "`n"
+
+          Set-Content -Path 'build/artifacts/RELEASE_NOTES.md' -Value ($body + $verify) -Encoding utf8
+          Get-Content 'build/artifacts/RELEASE_NOTES.md' | Write-Host
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SherpaManager-v${{ steps.version.outputs.version }}-win-x64
+          path: build/artifacts/*
+          if-no-files-found: error
+          retention-days: 30
+
+      # Drafted rather than published, so the archives can be checked on real
+      # hardware before anyone can download them. Publish from the Releases page.
+      - name: Draft GitHub release
+        if: github.event_name == 'push'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $arguments = @(
+            'release', 'create', $env:TAG,
+            '--draft',
+            '--title', "Sherpa Manager v$($env:VERSION)",
+            '--notes-file', 'build/artifacts/RELEASE_NOTES.md'
+          )
+          if ($env:VERSION.StartsWith('0.')) { $arguments += '--prerelease' }
+          $arguments += Get-ChildItem build/artifacts -File |
+            Where-Object { $_.Name -ne 'RELEASE_NOTES.md' } |
+            ForEach-Object { $_.FullName }
+
+          gh @arguments
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed with exit code $LASTEXITCODE." }
