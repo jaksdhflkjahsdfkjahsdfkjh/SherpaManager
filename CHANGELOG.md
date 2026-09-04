@@ -9,7 +9,7 @@ Releases are published from tags of the form `v<version>`. The tag, the
 `<Version>` in [Directory.Build.props](Directory.Build.props), and the heading in
 this file must all agree; the release workflow fails the build when they do not.
 
-## Unreleased
+## 0.4.5
 
 ### Added
 
