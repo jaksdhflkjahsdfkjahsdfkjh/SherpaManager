@@ -208,7 +208,7 @@ jobs:
             'Compare the SHA-256 of the downloaded archive against `SHA256SUMS.txt`:'
             ''
             '```powershell'
-            "Get-FileHash .\SherpaManager-v$version-win-x64.zip -Algorithm SHA256"
+            "Get-FileHash .\SherpaManager-v$version-win-x64-setup.exe -Algorithm SHA256"
             '```'
           ) -join "`n"
 

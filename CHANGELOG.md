@@ -9,6 +9,17 @@ Releases are published from tags of the form `v<version>`. The tag, the
 `<Version>` in [Directory.Build.props](Directory.Build.props), and the heading in
 this file must all agree; the release workflow fails the build when they do not.
 
+## Unreleased
+
+### Changed
+
+- The bug report template now asks for the **Settings -> Copy diagnostics**
+  report, how Sherpa Manager was installed, and how the reporter recovered from
+  any bad display state. It also restates what the diagnostics report can
+  contain so reporters can review it before pasting.
+- Release notes point at the installer for checksum verification, matching the
+  download the README recommends.
+
 ## 0.4.5
 
 ### Added

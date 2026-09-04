@@ -6,13 +6,31 @@ labels:
 body:
   - type: markdown
     attributes:
-      value: Thanks for taking the time to report a problem. Do not include passwords, tokens, or private paths you do not want to share publicly.
+      value: |
+        Thanks for taking the time to report a problem.
+
+        The **Diagnostics report** field below is the single most useful thing you can include. Sherpa Manager copies it for you: **Settings → Copy diagnostics**. It carries your Sherpa and Windows versions, GPU and display-driver details, NVIDIA API state, the current monitor topology, activation timing, native error codes, and recent process-matching decisions.
+
+        Paths and command-line arguments are redacted automatically, but the report can still contain profile names, application names, monitor model names, and process names. Review it before pasting. Do not include passwords, tokens, or private paths you do not want to share publicly.
   - type: input
     id: version
     attributes:
       label: Sherpa Manager version
-      description: Shown by Settings -> Copy diagnostics, which also reports your Windows, GPU, and driver versions.
-      placeholder: 0.4.4
+      description: The first line of the diagnostics report.
+      placeholder: 0.4.5
+    validations:
+      required: true
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: How did you install it?
+      description: Some problems only affect one packaging form, so this narrows things down quickly.
+      options:
+        - Installer (SherpaManager-...-setup.exe)
+        - Portable single file (SherpaManager-...-portable.exe)
+        - Framework-dependent zip
+        - Self-contained zip
+        - Built from source
     validations:
       required: true
   - type: input
@@ -26,7 +44,7 @@ body:
     id: displays
     attributes:
       label: Display and GPU setup
-      description: Include monitor count, GPU model, and connection arrangement when relevant.
+      description: Monitor count, GPU model, connection arrangement, and whether NVIDIA Surround is involved.
   - type: textarea
     id: steps
     attributes:
@@ -49,3 +67,14 @@ body:
       label: Actual behavior
     validations:
       required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics report
+      description: Paste the output of **Settings → Copy diagnostics**, taken as soon after the problem as you can. Reports that include this are far quicker to act on.
+      render: text
+  - type: textarea
+    id: recovery
+    attributes:
+      label: How did you recover?
+      description: If displays were left in a bad state, say what got them back — Sherpa's countdown or Restore last, Win+P, Windows Display Settings, NVIDIA Control Panel, or a reboot. This tells us whether the safety paths worked.
