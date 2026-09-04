@@ -30,6 +30,27 @@ The first launch creates empty **Work**, **iRacing**, and **ACC** examples witho
 - [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) only when building from source
 - An NVIDIA driver exposing NVAPI when using automatic Surround switching
 
+Sherpa Manager is x64 only. NVIDIA Surround support binds `nvapi64.dll` directly, which a 32-bit process cannot load, so every build is pinned to x64 in [Directory.Build.props](Directory.Build.props).
+
+## Install
+
+Download the latest archive from the [Releases page](../../releases) and unpack it anywhere you like. There is no installer and nothing is written outside your user profile.
+
+| Archive | Contains | Choose it when |
+| --- | --- | --- |
+| `SherpaManager-v<version>-win-x64.zip` | Framework-dependent build | You have, or are willing to install, the .NET 8 Desktop Runtime. Much smaller. |
+| `SherpaManager-v<version>-win-x64-self-contained.zip` | Self-contained build | You want a single folder that runs without installing .NET. |
+
+Every release also publishes `SHA256SUMS.txt`. Verify a download before running it:
+
+```powershell
+Get-FileHash .\SherpaManager-v<version>-win-x64.zip -Algorithm SHA256
+```
+
+Compare the printed hash with the matching line in `SHA256SUMS.txt`. Releases are unsigned, so Windows SmartScreen may warn on first run; see [Known limitations](#known-limitations).
+
+Changes for each version are listed in [CHANGELOG.md](CHANGELOG.md).
+
 ## Build, test, and run
 
 ```powershell
@@ -51,7 +72,7 @@ Or create a larger self-contained build that does not require a separately insta
 dotnet publish src/SherpaManager.csproj -c Release -r win-x64 --self-contained true -o build/SherpaManager-self-contained
 ```
 
-The `build/` directory is intentionally ignored. Publish packaged binaries through GitHub Releases instead of committing them.
+The `build/` directory is intentionally ignored. Packaged binaries are published through GitHub Releases by [.github/workflows/release.yml](.github/workflows/release.yml) rather than committed; see [CONTRIBUTING.md](CONTRIBUTING.md) for the release procedure.
 
 ## Configure work and sim monitors
 

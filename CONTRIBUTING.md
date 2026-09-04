@@ -31,6 +31,19 @@ dotnet run --project tests/SherpaManager.Tests/SherpaManager.Tests.csproj -c Rel
 Remove-Item Env:\SHERPA_HARDWARE_TESTS
 ```
 
+## Releasing
+
+Releases are cut from tags. The release workflow refuses to run if the tag and the project version disagree, so bump them together.
+
+1. Update `Version`, `AssemblyVersion`, `FileVersion`, and `InformationalVersion` in [Directory.Build.props](Directory.Build.props). This is the only place the version is declared.
+2. Move the `Unreleased` entries in [CHANGELOG.md](CHANGELOG.md) under a new `## <version>` heading. The release notes are extracted from that section verbatim.
+3. Build and test in Release configuration with no warnings or errors.
+4. Tag the commit `v<version>` and push the tag.
+
+[.github/workflows/release.yml](.github/workflows/release.yml) then verifies the version, builds, runs the tests, publishes framework-dependent and self-contained `win-x64` archives, checks that both executables really are x64, writes `SHA256SUMS.txt`, and opens a **draft** GitHub release. Review the draft and publish it manually once the archives have been checked on real hardware.
+
+To package without releasing, run the workflow manually from the Actions tab and supply a version. Manual runs upload the archives as workflow artifacts and do not create a release.
+
 ## Code style
 
 - Preserve nullable reference type annotations.
