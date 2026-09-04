@@ -110,6 +110,18 @@ While a profile switch, display test, or recovery operation is running, choose *
 
 Windows commonly hides `.url` and `.lnk` extensions. Sherpa resolves an unambiguous hidden extension automatically, and the file picker includes both formats. The standard Steam iRacing shortcut (`steam://rungameid/266410`) is automatically associated with `iRacingUI`; Sherpa deliberately does not manage the persistent iRacing service process. Sherpa follows child processes created by launchers. If a script or custom protocol does not reveal its launched process, select the actual executable when possible; otherwise Sherpa reports that it cannot manage that entry.
 
+## Quick switching
+
+A profile can be activated without opening the window.
+
+- **Global shortcut.** Give a profile a combination such as `Ctrl+Alt+I` in the profile editor. It works anywhere in Windows. The combination needs Ctrl, Alt, or Win so it cannot capture ordinary typing, and Sherpa tells you when another application already owns it or when two profiles claim the same one. Duplicating a profile deliberately does not copy its shortcut.
+- **Command line.** `SherpaManager.exe --activate "iRacing"` switches by name, matched without case sensitivity. `--help` lists the arguments.
+- **Desktop shortcut.** **Create desktop shortcut** in the profile editor writes a shortcut that runs the command above.
+- **Start with Windows.** A per-user startup entry, so it needs no administrator rights. Sherpa reads the registry rather than its own settings file, so removing the entry from Task Manager is reflected in Settings.
+- **Activate at startup.** Optionally apply a chosen profile whenever Sherpa Manager launches.
+
+If Sherpa Manager is already running, a second launch hands its request to the running copy rather than starting a rival instance. Every route runs the same activation as the button does, including the preview and the display confirmation countdown, so nothing bypasses the safety steps.
+
 ## Window and tray behavior
 
 - Starting Sherpa again restores and activates the existing instance.
@@ -144,6 +156,7 @@ Use **Settings → Copy diagnostics** to copy the Sherpa and Windows versions, G
 ## Known limitations
 
 - Windows only.
+- A global shortcut is claimed first-come-first-served by Windows. If another application already holds the combination, Sherpa reports it and the profile keeps working from the window, tray, or command line.
 - Display layouts are hardware-specific and are not intended to move between computers.
 - NVAPI Surround support depends on the installed NVIDIA GPU and driver. The sim profile must be captured while Surround is enabled because NVAPI only enumerates complete active grids; unsupported drivers and driver-reload-required topologies fail safely and require NVIDIA Control Panel.
 - Scripts and custom protocols may be launch-only when Windows does not expose the process they create.

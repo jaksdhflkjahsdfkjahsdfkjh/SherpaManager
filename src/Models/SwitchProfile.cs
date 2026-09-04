@@ -7,6 +7,7 @@ public sealed class SwitchProfile : ObservableObject
     private string _name = "New profile";
     private string _description = string.Empty;
     private string _accentColor = "#6C57FF";
+    private string _hotkey = string.Empty;
     private DisplaySnapshot? _display;
     private DateTime? _lastActivatedUtc;
     private NvidiaSurroundMode _nvidiaSurroundMode;
@@ -15,11 +16,13 @@ public sealed class SwitchProfile : ObservableObject
     public string Name { get => _name; set => SetProperty(ref _name, value); }
     public string Description { get => _description; set => SetProperty(ref _description, value); }
     public string AccentColor { get => _accentColor; set => SetProperty(ref _accentColor, value); }
+    public string Hotkey { get => _hotkey; set => SetProperty(ref _hotkey, value); }
     public DisplaySnapshot? Display { get => _display; set { if (SetProperty(ref _display, value)) OnPropertyChanged(nameof(DisplaySummary)); } }
     public DateTime? LastActivatedUtc { get => _lastActivatedUtc; set => SetProperty(ref _lastActivatedUtc, value); }
     public NvidiaSurroundMode NvidiaSurroundMode { get => _nvidiaSurroundMode; set => SetProperty(ref _nvidiaSurroundMode, value); }
     public ObservableCollection<LaunchApplication> Applications { get; set; } = [];
 
+    /// <summary>A duplicate never inherits the shortcut: two profiles cannot own one combination.</summary>
     public string DisplaySummary => Display?.Summary ?? "No display layout captured — activation will keep the current layout.";
 
     public SwitchProfile Clone(string? name = null) => new()

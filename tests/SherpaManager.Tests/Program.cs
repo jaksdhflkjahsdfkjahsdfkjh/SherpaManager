@@ -58,7 +58,12 @@ internal static class Program
             ("Activation preview reports unusable applications as problems", TestPreviewApplicationProblemsAsync),
             ("Activation preview describes the Surround transition", TestPreviewSurroundAsync),
             ("Activation preview changes nothing", TestPreviewIsReadOnlyAsync),
-            ("Activation preview window renders every item", TestPreviewWindowRendersAsync)
+            ("Activation preview window renders every item", TestPreviewWindowRendersAsync),
+            ("Command line parses --activate in both forms", TestCommandLineParsingAsync),
+            ("Hotkeys parse, canonicalise, and reject unusable combinations", TestHotkeyParsingAsync),
+            ("A second launch hands its profile to the running instance", TestSingleInstanceProfileHandoffAsync),
+            ("Desktop shortcut names survive awkward profile names", TestShortcutFileNameAsync),
+            ("A duplicated profile does not inherit the shortcut", TestProfileCloneDropsHotkeyAsync)
         };
 
         var selectedTests = tests.ToList();
@@ -1387,6 +1392,143 @@ internal static class Program
     private static void Assert(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
+    }
+
+    private static Task TestCommandLineParsingAsync()
+    {
+        var separate = CommandLineOptions.Parse(["--activate", "iRacing"]);
+        Assert(separate.ActivateProfile == "iRacing", $"Expected iRacing, got '{separate.ActivateProfile}'.");
+
+        var inline = CommandLineOptions.Parse(["--activate=Work Setup"]);
+        Assert(inline.ActivateProfile == "Work Setup", $"Expected 'Work Setup', got '{inline.ActivateProfile}'.");
+
+        var quoted = CommandLineOptions.Parse(["--activate=\"Work Setup\""]);
+        Assert(quoted.ActivateProfile == "Work Setup", "A quoted inline value should keep its spaces and lose its quotes.");
+
+        var cased = CommandLineOptions.Parse(["--ACTIVATE", "ACC"]);
+        Assert(cased.ActivateProfile == "ACC", "The switch itself should be case insensitive.");
+
+        // A profile name is never silently taken from the next switch.
+        var missingValue = CommandLineOptions.Parse(["--activate", "--smoke-test"]);
+        Assert(missingValue.ActivateProfile is null, "A missing profile name must not consume the following switch.");
+        Assert(missingValue.SmokeTest, "The following switch should still be parsed.");
+
+        var help = CommandLineOptions.Parse(["--help"]);
+        Assert(help.ShowHelp, "--help should be recognised.");
+
+        // Unknown arguments must never stop the application starting.
+        var unknown = CommandLineOptions.Parse(["--future-flag", "--activate", "Work"]);
+        Assert(unknown.ActivateProfile == "Work", "An unknown argument should not break later parsing.");
+        Assert(unknown.Unknown.Count == 1, $"Expected one unknown argument, got {unknown.Unknown.Count}.");
+
+        var none = CommandLineOptions.Parse([]);
+        Assert(none.ActivateProfile is null && !none.ShowHelp && !none.SmokeTest,
+            "No arguments should produce no requests.");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestHotkeyParsingAsync()
+    {
+        Assert(HotkeyDefinition.TryParse("ctrl+alt+i", out var parsed, out _), "Ctrl+Alt+I should parse.");
+        Assert(parsed!.Text == "Ctrl+Alt+I", $"Expected canonical 'Ctrl+Alt+I', got '{parsed.Text}'.");
+        Assert(parsed.VirtualKey == 'I', "The virtual key for I should be its upper-case code.");
+        Assert(parsed.Modifiers == (HotkeyModifiers.Control | HotkeyModifiers.Alt), "Both modifiers should be set.");
+
+        Assert(HotkeyDefinition.TryParse("WIN + SHIFT + f12", out var functionKey, out _), "Win+Shift+F12 should parse.");
+        Assert(functionKey!.Text == "Shift+Win+F12", $"Modifier order should be canonical, got '{functionKey.Text}'.");
+        Assert(functionKey.VirtualKey == 0x7B, "F12 should map to VK_F12.");
+
+        // Shift alone would capture ordinary typing.
+        Assert(!HotkeyDefinition.TryParse("Shift+A", out _, out var shiftError), "Shift+A should be rejected.");
+        Assert(shiftError is not null && shiftError.Contains("Ctrl", StringComparison.Ordinal),
+            "The rejection should say which modifiers are acceptable.");
+
+        Assert(!HotkeyDefinition.TryParse("Ctrl+Alt", out _, out var noKeyError), "A combination with no key should be rejected.");
+        Assert(noKeyError is not null, "A missing key should explain itself.");
+
+        Assert(!HotkeyDefinition.TryParse("Ctrl+Alt+I+J", out _, out _), "Two keys should be rejected.");
+        Assert(!HotkeyDefinition.TryParse("Ctrl+Alt+F25", out _, out _), "F25 does not exist.");
+        Assert(!HotkeyDefinition.TryParse("Ctrl+Alt+;", out _, out _), "Punctuation is not registerable here.");
+        Assert(!HotkeyDefinition.TryParse("", out _, out _), "Empty text is not a hotkey.");
+        Assert(!HotkeyDefinition.TryParse(null, out _, out _), "Null is not a hotkey.");
+
+        Assert(HotkeyDefinition.Canonicalize("  alt + ctrl + 5 ") == "Ctrl+Alt+5",
+            "Canonicalize should tidy spacing and ordering.");
+        Assert(HotkeyDefinition.Canonicalize("nonsense") is null, "Canonicalize should return null for bad input.");
+        return Task.CompletedTask;
+    }
+
+    private static async Task TestSingleInstanceProfileHandoffAsync()
+    {
+        var key = "Test-" + Guid.NewGuid().ToString("N");
+        using var primary = new SingleInstanceService(key);
+        SingleInstanceService? secondary = null;
+        var secondaryThread = new Thread(() => secondary = new SingleInstanceService(key));
+        secondaryThread.Start();
+        secondaryThread.Join();
+        using var secondaryInstance = secondary ?? throw new InvalidOperationException("Secondary coordinator was not created.");
+
+        var payloads = new List<string?>();
+        using var delivered = new SemaphoreSlim(0);
+        primary.StartListening(payload =>
+        {
+            lock (payloads) payloads.Add(payload);
+            delivered.Release();
+            return Task.FromResult(true);
+        });
+
+        Assert(secondaryInstance.SignalPrimaryInstance("iRacing Rig"), "The secondary was not acknowledged.");
+        Assert(await delivered.WaitAsync(TimeSpan.FromSeconds(5)), "The primary never saw the request.");
+        lock (payloads)
+            Assert(payloads[0] == "iRacing Rig",
+                $"The primary received '{payloads[0]}' instead of the requested profile.");
+
+        // A plain window activation must not replay the previous request. The
+        // coordinator has to live on its own thread: a mutex is reentrant for the
+        // thread that owns it, so a same-thread secondary would wrongly look primary.
+        var plainAcknowledged = false;
+        var plainWasSecondary = false;
+        var plainThread = new Thread(() =>
+        {
+            using var plain = new SingleInstanceService(key);
+            plainWasSecondary = !plain.IsPrimaryInstance;
+            if (plainWasSecondary) plainAcknowledged = plain.SignalPrimaryInstance();
+        });
+        plainThread.Start();
+        plainThread.Join(TimeSpan.FromSeconds(10));
+
+        Assert(plainWasSecondary, "The third coordinator should not have become primary.");
+        Assert(plainAcknowledged, "The plain activation was not acknowledged.");
+        Assert(await delivered.WaitAsync(TimeSpan.FromSeconds(5)), "The plain activation never arrived.");
+        lock (payloads)
+            Assert(payloads[1] is null,
+                $"A plain activation delivered a stale request: '{payloads[1]}'.");
+    }
+
+    private static Task TestShortcutFileNameAsync()
+    {
+        Assert(ShortcutService.BuildFileName("iRacing") == "iRacing (Sherpa).lnk",
+            "A simple name should be used as-is.");
+        var awkward = ShortcutService.BuildFileName("Work: sim/rig?");
+        Assert(!awkward.Any(character => Path.GetInvalidFileNameChars().Contains(character)),
+            $"'{awkward}' still contains characters Windows rejects.");
+        Assert(ShortcutService.BuildFileName("   ") == "Profile (Sherpa).lnk",
+            "A blank name should fall back rather than produce an unnamed file.");
+        Assert(ShortcutService.BuildFileName(new string('x', 200)).Length < 120,
+            "A very long profile name should be trimmed so the path stays usable.");
+        Assert(ShortcutService.BuildFileName("Trailing dots...").EndsWith("(Sherpa).lnk", StringComparison.Ordinal),
+            "Trailing dots should not break the extension.");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestProfileCloneDropsHotkeyAsync()
+    {
+        var profile = new SwitchProfile { Name = "iRacing", Hotkey = "Ctrl+Alt+I" };
+        var copy = profile.Clone();
+        Assert(string.IsNullOrEmpty(copy.Hotkey),
+            "A duplicated profile must not inherit the shortcut; two profiles cannot own one combination.");
+        Assert(profile.Hotkey == "Ctrl+Alt+I", "Duplicating must not disturb the original's shortcut.");
+        return Task.CompletedTask;
     }
 
     private static DisplayTargetSnapshot Monitor(string identity, string name, uint width, uint height,

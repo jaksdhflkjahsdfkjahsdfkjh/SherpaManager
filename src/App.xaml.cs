@@ -26,7 +26,16 @@ public partial class App : System.Windows.Application
             ["windowsVersion"] = Environment.OSVersion.Version.ToString(),
             ["processArchitecture"] = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString()
         });
-        if (e.Args.Contains("--smoke-test", StringComparer.OrdinalIgnoreCase))
+        var options = CommandLineOptions.Parse(e.Args);
+        if (options.ShowHelp)
+        {
+            System.Windows.MessageBox.Show(CommandLineOptions.HelpText, "Sherpa Manager",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            Shutdown(0);
+            return;
+        }
+
+        if (options.SmokeTest)
         {
             try
             {
@@ -56,7 +65,9 @@ public partial class App : System.Windows.Application
         }
         if (!_singleInstance.IsPrimaryInstance)
         {
-            var signalled = _singleInstance.SignalPrimaryInstance();
+            // Hand the requested profile to the copy that is already running rather
+            // than starting a second one that would fight it for the display.
+            var signalled = _singleInstance.SignalPrimaryInstance(options.ActivateProfile);
             if (!_singleInstance.IsPrimaryInstance)
             {
                 if (!signalled)
@@ -70,10 +81,10 @@ public partial class App : System.Windows.Application
             }
         }
 
-        var window = new MainWindow();
+        var window = new MainWindow { PendingActivationRequest = options.ActivateProfile };
         MainWindow = window;
-        _singleInstance.StartListening(() =>
-            window.Dispatcher.InvokeAsync(window.TryRestoreAndActivate).Task);
+        _singleInstance.StartListening(payload =>
+            window.Dispatcher.InvokeAsync(() => window.HandleActivationRequestAsync(payload)).Task.Unwrap());
         window.Show();
         _diagnostics.Write("info", "application.ready");
     }

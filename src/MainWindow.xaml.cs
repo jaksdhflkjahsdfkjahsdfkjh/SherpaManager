@@ -20,6 +20,9 @@ public partial class MainWindow : Window
     private readonly ProcessService _processes;
     private readonly ProfileActivationService _activator;
     private readonly ActivationPreflightService _preflight;
+    private readonly GlobalHotkeyService _hotkeys;
+    private readonly StartupRegistrationService _startup;
+    private readonly ShortcutService _shortcuts;
     private readonly System.Drawing.Icon? _applicationIcon;
     private readonly Forms.NotifyIcon _trayIcon;
     private readonly HashSet<SwitchProfile> _observedProfiles = [];
@@ -41,6 +44,10 @@ public partial class MainWindow : Window
     private volatile bool _acceptActivation = true;
     private WindowState _lastVisibleState = WindowState.Normal;
     private SwitchProfile? _profileBeforeSettings;
+    private bool _startupActivationHandled;
+
+    /// <summary>Profile name requested on the command line, applied once profiles have loaded.</summary>
+    public string? PendingActivationRequest { get; set; }
 
     public MainWindow()
     {
@@ -56,6 +63,10 @@ public partial class MainWindow : Window
         };
         _activator = new ProfileActivationService(_displays, _processes, _diagnostics);
         _preflight = new ActivationPreflightService(_displays, _processes);
+        _hotkeys = new GlobalHotkeyService(_diagnostics);
+        _startup = new StartupRegistrationService(_diagnostics);
+        _shortcuts = new ShortcutService(_diagnostics);
+        _hotkeys.HotkeyPressed += Hotkeys_HotkeyPressed;
         _processes.PendingCloseCompleted += ProcessService_PendingCloseCompleted;
         _processes.PendingMinimizationCompleted += ProcessService_PendingMinimizationCompleted;
         _applicationIcon = TryLoadApplicationIcon();
@@ -76,6 +87,8 @@ public partial class MainWindow : Window
         var handle = new WindowInteropHelper(this).Handle;
         if (DwmSetWindowAttribute(handle, 20, ref enabled, sizeof(int)) != 0)
             DwmSetWindowAttribute(handle, 19, ref enabled, sizeof(int));
+        _hotkeys.Attach(handle);
+        ApplyHotkeys();
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -107,13 +120,161 @@ public partial class MainWindow : Window
         CloseToTrayCheckBox.IsChecked = _document.Settings.MinimizeToTrayOnClose;
         ConfirmDisplayChangesCheckBox.IsChecked = _document.Settings.ConfirmDisplayChanges;
         ShowActivationPreviewCheckBox.IsChecked = _document.Settings.ShowActivationPreview;
+        // The registry is the truth for Windows startup: the user can remove the
+        // entry from Task Manager without Sherpa ever knowing.
+        _document.Settings.StartWithWindows = _startup.IsRegistered;
+        StartWithWindowsCheckBox.IsChecked = _document.Settings.StartWithWindows;
+        RebuildStartupProfileCombo();
         _loadingSettings = false;
+        ApplyHotkeys();
         try { await _store.SaveAsync(_document); }
         catch (Exception ex) { ShowError("Could not save profiles", ex); }
         RefreshActiveProfile();
         RebuildTrayMenu();
         if (!handledInterruptedRecovery)
             StatusText.Text = $"Profiles are stored in {_store.FilePath}";
+        await HandleStartupActivationAsync();
+    }
+
+    /// <summary>
+    /// Applies a profile requested on the command line, or the configured startup
+    /// profile. Runs at most once per launch so a later window activation cannot
+    /// silently re-trigger a switch.
+    /// </summary>
+    private async Task HandleStartupActivationAsync()
+    {
+        if (_startupActivationHandled || !_acceptActivation) return;
+        _startupActivationHandled = true;
+
+        var requested = PendingActivationRequest;
+        PendingActivationRequest = null;
+        if (!string.IsNullOrWhiteSpace(requested))
+        {
+            await ActivateProfileByNameAsync(requested);
+            return;
+        }
+
+        if (_document.Settings.ActivateProfileOnStartup is not { } startupProfileId) return;
+        if (_document.Profiles.FirstOrDefault(profile => profile.Id == startupProfileId) is not { } profile) return;
+        ProfilesList.SelectedItem = profile;
+        await ActivateProfileAsync(profile);
+    }
+
+    /// <summary>
+    /// Handles a request from a second launch. Returns true once the request has
+    /// been acted on, which is what releases the waiting process.
+    /// </summary>
+    public async Task<bool> HandleActivationRequestAsync(string? profileName)
+    {
+        var restored = TryRestoreAndActivate();
+        if (string.IsNullOrWhiteSpace(profileName)) return restored;
+        if (!_acceptActivation) return restored;
+
+        if (!_profilesLoaded)
+        {
+            // Still starting up. Let the normal startup path apply it instead of
+            // racing the profile load.
+            PendingActivationRequest = profileName;
+            return restored;
+        }
+
+        await ActivateProfileByNameAsync(profileName);
+        return true;
+    }
+
+    private async Task ActivateProfileByNameAsync(string profileName)
+    {
+        var wanted = profileName.Trim();
+        var profile = _document.Profiles.FirstOrDefault(candidate =>
+            string.Equals(candidate.Name?.Trim(), wanted, StringComparison.OrdinalIgnoreCase));
+        if (profile is null)
+        {
+            _diagnostics.Write("warning", "activation.request.unknown_profile", data: new Dictionary<string, object?>
+            {
+                ["profileCount"] = _document.Profiles.Count
+            });
+            StatusText.Text = $"No profile is named \"{wanted}\".";
+            return;
+        }
+
+        ProfilesList.SelectedItem = profile;
+        await ActivateProfileAsync(profile);
+    }
+
+    private void Hotkeys_HotkeyPressed(Guid profileId)
+    {
+        if (!_acceptActivation || Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
+        _ = Dispatcher.InvokeAsync(async () =>
+        {
+            if (!_acceptActivation) return;
+            if (_document.Profiles.FirstOrDefault(profile => profile.Id == profileId) is not { } profile) return;
+            TryRestoreAndActivate();
+            ProfilesList.SelectedItem = profile;
+            await ActivateProfileAsync(profile);
+        });
+    }
+
+    private void ApplyHotkeys()
+    {
+        if (!_profilesLoaded) return;
+        var failures = _hotkeys.Apply(_document.Profiles
+            .Select(profile => (profile.Id, profile.Name, (string?)profile.Hotkey)));
+        if (failures.Count > 0) StatusText.Text = string.Join("  ", failures);
+    }
+
+    private async void Hotkey_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (SelectedProfile is not { } profile) return;
+        var text = profile.Hotkey?.Trim() ?? string.Empty;
+
+        if (text.Length == 0)
+        {
+            profile.Hotkey = string.Empty;
+            HotkeyStatusText.Text = string.Empty;
+        }
+        else if (HotkeyDefinition.TryParse(text, out var parsed, out var error))
+        {
+            profile.Hotkey = parsed!.Text;
+            HotkeyStatusText.Text = string.Empty;
+        }
+        else
+        {
+            HotkeyStatusText.Text = error ?? "That is not a shortcut Sherpa can register.";
+            return;
+        }
+
+        ApplyHotkeys();
+        await SaveAsync();
+    }
+
+    private void CreateShortcut_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedProfile is not { } profile) return;
+        try
+        {
+            var path = _shortcuts.CreateDesktopShortcut(profile.Name);
+            StatusText.Text = $"Created {System.IO.Path.GetFileName(path)} on the desktop.";
+        }
+        catch (Exception exception)
+        {
+            ShowError($"Could not create a desktop shortcut for {profile.Name}", exception);
+        }
+    }
+
+    private void RebuildStartupProfileCombo()
+    {
+        var options = new List<StartupProfileOption> { new(null, "None") };
+        options.AddRange(_document.Profiles.Select(profile => new StartupProfileOption(profile.Id, profile.Name)));
+        StartupProfileCombo.ItemsSource = options;
+        StartupProfileCombo.SelectedValue = _document.Settings.ActivateProfileOnStartup;
+        if (StartupProfileCombo.SelectedItem is null) StartupProfileCombo.SelectedIndex = 0;
+    }
+
+    private async void StartupProfileCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingSettings || !IsLoaded || !_profilesLoaded) return;
+        _document.Settings.ActivateProfileOnStartup = StartupProfileCombo.SelectedValue as Guid?;
+        await SaveAsync();
     }
 
     private SwitchProfile? SelectedProfile => ProfilesList.SelectedItem as SwitchProfile;
@@ -581,6 +742,17 @@ public partial class MainWindow : Window
         _document.Settings.MinimizeToTrayOnClose = CloseToTrayCheckBox.IsChecked == true;
         _document.Settings.ConfirmDisplayChanges = ConfirmDisplayChangesCheckBox.IsChecked == true;
         _document.Settings.ShowActivationPreview = ShowActivationPreviewCheckBox.IsChecked == true;
+
+        var wantsStartup = StartWithWindowsCheckBox.IsChecked == true;
+        if (wantsStartup != _startup.IsRegistered && !_startup.SetRegistered(wantsStartup))
+        {
+            StatusText.Text = "Windows startup could not be changed. Check that the registry is writable.";
+            _loadingSettings = true;
+            StartWithWindowsCheckBox.IsChecked = _startup.IsRegistered;
+            _loadingSettings = false;
+        }
+        _document.Settings.StartWithWindows = _startup.IsRegistered;
+
         await SaveAsync();
     }
 
@@ -626,6 +798,8 @@ public partial class MainWindow : Window
     {
         SynchronizeProfileObservers();
         RebuildTrayMenu();
+        RebuildStartupProfileCombo();
+        ApplyHotkeys();
     }
 
     private void SynchronizeProfileObservers()
@@ -879,6 +1053,8 @@ public partial class MainWindow : Window
         _observedProfiles.Clear();
         _processes.PendingCloseCompleted -= ProcessService_PendingCloseCompleted;
         _processes.PendingMinimizationCompleted -= ProcessService_PendingMinimizationCompleted;
+        _hotkeys.HotkeyPressed -= Hotkeys_HotkeyPressed;
+        _hotkeys.Dispose();
         _displays.Dispose();
         _trayIcon.Visible = false;
         _trayIcon.Dispose();
@@ -1030,6 +1206,8 @@ public partial class MainWindow : Window
     }
 
     private sealed record SurroundModeOption(NvidiaSurroundMode Value, string Label);
+
+    private sealed record StartupProfileOption(Guid? Value, string Label);
 
     private enum CloseSaveDecision
     {

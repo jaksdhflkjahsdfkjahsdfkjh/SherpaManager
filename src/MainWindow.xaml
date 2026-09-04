@@ -160,6 +160,31 @@
                         </StackPanel>
                     </Border>
 
+                    <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="10" Padding="20" Margin="0,0,0,22">
+                        <StackPanel>
+                            <TextBlock Text="QUICK SWITCHING" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource MutedTextBrush}"/>
+                            <TextBlock Text="Switch to this profile without opening Sherpa."
+                                       Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,6,0,0"/>
+                            <Grid Margin="0,14,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="175"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Global shortcut" Foreground="{StaticResource MutedTextBrush}"
+                                           VerticalAlignment="Center" Margin="0,0,12,0"/>
+                                <TextBox Grid.Column="1" MaxLength="40" LostFocus="Hotkey_LostFocus"
+                                         Text="{Binding Hotkey, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="For example Ctrl+Alt+I. Leave it empty for no shortcut."/>
+                                <TextBlock x:Name="HotkeyStatusText" Grid.Column="2" VerticalAlignment="Center"
+                                           Margin="12,0,0,0" TextWrapping="Wrap" FontSize="11"
+                                           Foreground="{StaticResource MutedTextBrush}"/>
+                            </Grid>
+                            <Button Content="Create desktop shortcut" Click="CreateShortcut_Click"
+                                    HorizontalAlignment="Left" Margin="0,14,0,0"/>
+                        </StackPanel>
+                    </Border>
+
                     <Grid Margin="0,0,0,10">
                         <StackPanel>
                             <TextBlock Text="APPLICATIONS" FontSize="17" FontWeight="SemiBold"/>
@@ -278,6 +303,20 @@
                                     <CheckBox x:Name="ShowActivationPreviewCheckBox" Margin="0,10,0,0"
                                               Content="Show what a profile switch will change before it runs"
                                               Checked="SettingsCheckBox_Changed" Unchecked="SettingsCheckBox_Changed"/>
+                                    <CheckBox x:Name="StartWithWindowsCheckBox" Margin="0,10,0,0"
+                                              Content="Start Sherpa Manager when Windows starts"
+                                              Checked="SettingsCheckBox_Changed" Unchecked="SettingsCheckBox_Changed"/>
+                                    <Grid Margin="0,14,0,0" HorizontalAlignment="Left">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="200"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Activate at startup" VerticalAlignment="Center"
+                                                   Foreground="{StaticResource MutedTextBrush}" Margin="0,0,12,0"/>
+                                        <ComboBox x:Name="StartupProfileCombo" Grid.Column="1"
+                                                  DisplayMemberPath="Label" SelectedValuePath="Value"
+                                                  SelectionChanged="StartupProfileCombo_SelectionChanged"/>
+                                    </Grid>
                                 </StackPanel>
                                 <Button Grid.Column="1" Content="Open profile file" Click="OpenProfileFile_Click"
                                         VerticalAlignment="Center" Margin="24,0,0,0"/>

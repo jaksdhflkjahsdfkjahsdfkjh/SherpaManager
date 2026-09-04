@@ -9,6 +9,30 @@ Releases are published from tags of the form `v<version>`. The tag, the
 `<Version>` in [Directory.Build.props](Directory.Build.props), and the heading in
 this file must all agree; the release workflow fails the build when they do not.
 
+## 0.4.7
+
+### Added
+
+- Global shortcuts. Each profile can claim a combination such as `Ctrl+Alt+I`
+  and be activated from anywhere in Windows. A combination another application
+  already owns, or one claimed by two profiles, is reported and skipped rather
+  than failing silently.
+- `SherpaManager.exe --activate <profile>` switches by name, matched without
+  case sensitivity. If Sherpa Manager is already running, the request is handed
+  to the running copy instead of starting a second one that would fight it for
+  the display. `--help` lists the arguments.
+- **Create desktop shortcut**, which writes a desktop shortcut that activates
+  the selected profile.
+- **Settings -> Start Sherpa Manager when Windows starts**, registered per user
+  so it needs no administrator rights.
+- **Settings -> Activate at startup**, which applies a chosen profile when
+  Sherpa Manager launches.
+
+### Changed
+
+- Duplicating a profile no longer copies its global shortcut, since two profiles
+  cannot own one combination.
+
 ## 0.4.6
 
 ### Added
