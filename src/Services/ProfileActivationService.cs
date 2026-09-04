@@ -81,6 +81,20 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
                     return false;
                 }
                 displayApplied = true;
+
+                // Windows returns from the topology call before the monitors have
+                // finished re-syncing. Starting or closing applications during that
+                // window is how they end up on the wrong monitor or the wrong size.
+                var settleDelay = document.Settings.DisplaySettleDelayMs;
+                if (settleDelay > 0)
+                {
+                    report($"Waiting {settleDelay / 1000.0:0.#}s for the displays to settle…");
+                    await Task.Delay(settleDelay, cancellationToken);
+                    LogStage("display.settled", new Dictionary<string, object?>
+                    {
+                        ["settleDelayMs"] = settleDelay
+                    });
+                }
             }
             else
             {

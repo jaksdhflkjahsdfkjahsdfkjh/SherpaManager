@@ -63,7 +63,10 @@ internal static class Program
             ("Hotkeys parse, canonicalise, and reject unusable combinations", TestHotkeyParsingAsync),
             ("A second launch hands its profile to the running instance", TestSingleInstanceProfileHandoffAsync),
             ("Desktop shortcut names survive awkward profile names", TestShortcutFileNameAsync),
-            ("A duplicated profile does not inherit the shortcut", TestProfileCloneDropsHotkeyAsync)
+            ("A duplicated profile does not inherit the shortcut", TestProfileCloneDropsHotkeyAsync),
+            ("A restored window is not minimized again", TestRestoredWindowStaysRestoredAsync),
+            ("Applications wait for the displays to settle", TestDisplaySettleDelayAsync),
+            ("The display settle delay is bounded", TestDisplaySettleDelayBoundsAsync)
         };
 
         var selectedTests = tests.ToList();
@@ -71,6 +74,18 @@ internal static class Program
             selectedTests.Add(("Display capture and same-topology recovery round trip", TestDisplayRoundTripAsync));
         if (Environment.GetEnvironmentVariable("SHERPA_VALIDATE_SAVED_PROFILES") == "1")
             selectedTests.Add(("Saved profile display snapshots pass preflight", TestSavedProfileSnapshotsAsync));
+
+        // SHERPA_TEST_FILTER runs a subset by name substring, which is how a
+        // fixture test gets isolated from the watchers other fixture tests leave
+        // running behind them.
+        var filter = Environment.GetEnvironmentVariable("SHERPA_TEST_FILTER");
+        if (!string.IsNullOrWhiteSpace(filter))
+        {
+            selectedTests = selectedTests
+                .Where(test => test.Name.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            Console.WriteLine($"Filter '{filter}' selected {selectedTests.Count} test(s).");
+        }
 
         foreach (var test in selectedTests)
         {
@@ -305,7 +320,7 @@ internal static class Program
             Name = "Target",
             Display = new DisplaySnapshot { IsVerified = true }
         };
-        var document = new ProfileDocument { ActiveProfileId = previous.Id, Profiles = [previous, target] };
+        var document = new ProfileDocument { ActiveProfileId = previous.Id, Profiles = [previous, target], Settings = { DisplaySettleDelayMs = 0 } };
 
         var activated = await new ProfileActivationService(displays, processes)
             .ActivateAsync(document, target, _ => { });
@@ -330,7 +345,7 @@ internal static class Program
                 VerificationEnvironmentFingerprint = "saved-environment"
             }
         };
-        var document = new ProfileDocument { Profiles = [target] };
+        var document = new ProfileDocument { Profiles = [target], Settings = { DisplaySettleDelayMs = 0 } };
         var confirmations = 0;
 
         displays.VerificationEnvironmentChanged = false;
@@ -484,7 +499,7 @@ internal static class Program
             Name = "Target",
             Display = new DisplaySnapshot { IsVerified = true }
         };
-        var document = new ProfileDocument { ActiveProfileId = previous.Id, Profiles = [previous, target] };
+        var document = new ProfileDocument { ActiveProfileId = previous.Id, Profiles = [previous, target], Settings = { DisplaySettleDelayMs = 0 } };
 
         var activated = await new ProfileActivationService(displays, processes)
             .ActivateAsync(document, target, _ => { });
@@ -519,7 +534,7 @@ internal static class Program
             Display = new DisplaySnapshot { IsVerified = true },
             Applications = [targetApp]
         };
-        var document = new ProfileDocument { ActiveProfileId = previous.Id, Profiles = [previous, target] };
+        var document = new ProfileDocument { ActiveProfileId = previous.Id, Profiles = [previous, target], Settings = { DisplaySettleDelayMs = 0 } };
 
         var activated = await new ProfileActivationService(displays, processes)
             .ActivateAsync(document, target, _ => { });
@@ -557,7 +572,7 @@ internal static class Program
             Display = new DisplaySnapshot { IsVerified = true },
             Applications = [startedTargetApp, delayedTargetApp]
         };
-        var document = new ProfileDocument { ActiveProfileId = previous.Id, Profiles = [previous, target] };
+        var document = new ProfileDocument { ActiveProfileId = previous.Id, Profiles = [previous, target], Settings = { DisplaySettleDelayMs = 0 } };
         using var cancellation = new CancellationTokenSource();
 
         var activation = new ProfileActivationService(displays, processes)
@@ -1552,6 +1567,164 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// The minimize watcher polls for the whole launch timeout so a launcher that
+    /// opens its window late still gets minimized. It must not fight the user:
+    /// restoring a window it has already minimized has to stick.
+    /// </summary>
+    private static async Task TestRestoredWindowStaysRestoredAsync()
+    {
+        using var directory = new TemporaryDirectory();
+        // Its own copy of the fixture. Earlier tests leave minimize watchers running
+        // for up to 45 seconds against the shared fixture path, and those would
+        // minimize this window using their own handle sets.
+        var fixtureDirectory = Path.Combine(directory.Path, "fixture");
+        CopyFixtureOutput(fixtureDirectory);
+
+        // Renamed, not just relocated. Other watchers match on the explicit process
+        // name "WindowFixture", so a copy that keeps that name is still matched by
+        // them no matter where it lives.
+        const string processName = "RestoreFixture";
+        var executable = Path.Combine(fixtureDirectory, processName + ".exe");
+        File.Move(Path.Combine(fixtureDirectory, "WindowFixture.exe"), executable);
+
+        var minimizedSignal = Path.Combine(directory.Path, "minimized.signal");
+        var app = new LaunchApplication
+        {
+            Name = "Restore fixture",
+            Path = executable,
+            ProcessName = processName,
+            Arguments = $"--state-file=\"{minimizedSignal}\"",
+            StartMinimized = true
+        };
+
+        var existing = Process.GetProcessesByName(processName).Select(process =>
+        {
+            var id = process.Id;
+            process.Dispose();
+            return id;
+        }).ToHashSet();
+
+        var service = new ProcessService();
+        try
+        {
+            var launch = await service.LaunchAsync(app, CancellationToken.None);
+            Assert(launch.Started, "Fixture did not start.");
+            Assert(await WaitForFileAsync(minimizedSignal, TimeSpan.FromSeconds(10)),
+                "The fixture did not reach the minimized state.");
+
+            var window = await WaitForFixtureWindowAsync(processName, existing, TimeSpan.FromSeconds(5));
+            Assert(window != IntPtr.Zero, "The fixture window handle could not be found.");
+            Assert(IsIconic(window), "The fixture window should start minimized.");
+
+            // Let the watcher complete a few 250 ms polls first. The process is
+            // started with a minimized window style, so the window is already
+            // minimized when the watcher first sights it; restoring before that
+            // first sighting is a genuine race, and not what a user can hit.
+            await Task.Delay(1000);
+
+            // The user opens the application again while the watcher is still running.
+            ShowWindow(window, SwRestore);
+            Assert(await WaitForConditionAsync(() => !IsIconic(window), TimeSpan.FromSeconds(3)),
+                "The fixture window did not restore.");
+
+            // Several watcher polls (250 ms each) must pass without it being undone.
+            await Task.Delay(1500);
+            Assert(!IsIconic(window),
+                "The minimize watcher re-minimized a window the user had restored.");
+        }
+        finally { await service.CloseAsync(app, CancellationToken.None); }
+    }
+
+    /// <summary>Finds the window of a fixture process that did not exist before.</summary>
+    private static async Task<IntPtr> WaitForFixtureWindowAsync(string processName,
+        HashSet<int> excludedProcessIds, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            foreach (var process in Process.GetProcessesByName(processName))
+            {
+                try
+                {
+                    if (excludedProcessIds.Contains(process.Id)) continue;
+                    process.Refresh();
+                    if (process.MainWindowHandle != IntPtr.Zero) return process.MainWindowHandle;
+                }
+                catch { /* The fixture may exit between enumeration and inspection. */ }
+                finally { process.Dispose(); }
+            }
+            await Task.Delay(100);
+        }
+        return IntPtr.Zero;
+    }
+
+    private static async Task<bool> WaitForConditionAsync(Func<bool> condition, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (condition()) return true;
+            await Task.Delay(100);
+        }
+        return condition();
+    }
+
+    private static async Task TestDisplaySettleDelayAsync()
+    {
+        var processes = new FakeProcessService();
+        var displays = new FakeDisplayConfigurationService(processes.Events);
+        var target = new SwitchProfile { Name = "iRacing", Display = new DisplaySnapshot() };
+        target.Applications.Add(new LaunchApplication { Name = "Sim", Path = @"C:\sim\app.exe" });
+        var document = new ProfileDocument { Profiles = { target } };
+        document.Settings.DisplaySettleDelayMs = 120;
+
+        var activator = new ProfileActivationService(displays, processes);
+        await activator.ActivateAsync(document, target, message =>
+        {
+            if (message.Contains("settle", StringComparison.OrdinalIgnoreCase))
+                processes.Events.Add("settle");
+        });
+
+        var order = processes.Events;
+        var settle = order.IndexOf("settle");
+        Assert(settle >= 0, $"The settle delay was never reported. Events: {string.Join(", ", order)}");
+        Assert(settle > order.IndexOf("display:apply"),
+            "The settle delay must come after the display layout is applied.");
+        Assert(settle < order.IndexOf(@"launch:C:\sim\app.exe"),
+            "Applications must not start until the displays have settled.");
+
+        // A profile with no captured layout changes no displays, so there is
+        // nothing to settle and no reason to make the user wait.
+        var noDisplay = new SwitchProfile { Name = "Work" };
+        noDisplay.Applications.Add(new LaunchApplication { Name = "Mail", Path = @"C:\work\mail.exe" });
+        document.Profiles.Add(noDisplay);
+        var processesWithoutDisplay = new FakeProcessService();
+        var displaysWithoutDisplay = new FakeDisplayConfigurationService(processesWithoutDisplay.Events);
+        var settleReported = false;
+        await new ProfileActivationService(displaysWithoutDisplay, processesWithoutDisplay)
+            .ActivateAsync(document, noDisplay, message =>
+            {
+                if (message.Contains("settle", StringComparison.OrdinalIgnoreCase)) settleReported = true;
+            });
+        Assert(!settleReported, "A profile without a display layout should not wait for displays to settle.");
+    }
+
+    private static Task TestDisplaySettleDelayBoundsAsync()
+    {
+        var settings = new AppSettings();
+        Assert(settings.DisplaySettleDelayMs == AppSettings.DefaultDisplaySettleDelayMs,
+            "A new profile document should carry the default settle delay.");
+
+        settings.DisplaySettleDelayMs = -500;
+        Assert(settings.DisplaySettleDelayMs == 0, "A negative delay should clamp to zero, not wait forever.");
+
+        settings.DisplaySettleDelayMs = int.MaxValue;
+        Assert(settings.DisplaySettleDelayMs == AppSettings.MaximumDisplaySettleDelayMs,
+            "A huge delay should be capped so a bad value cannot appear to hang a profile switch.");
+        return Task.CompletedTask;
+    }
+
     private static DisplayTargetSnapshot Monitor(string identity, string name, uint width, uint height,
         uint refreshHz = 60, int x = 0, int y = 0, uint rotation = 1) => new()
     {
@@ -1950,6 +2123,16 @@ internal static class Program
 
         public void ApplyConfiguration(NvidiaSurroundSnapshot snapshot, bool enabled) => ApplyConfigurationCalls++;
     }
+
+    private const int SwRestore = 9;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool ShowWindow(IntPtr window, int command);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool IsIconic(IntPtr window);
 
     private sealed class TemporaryDirectory : IDisposable
     {

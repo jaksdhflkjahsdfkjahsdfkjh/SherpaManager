@@ -48,6 +48,19 @@ this file must all agree; the release workflow fails the build when they do not.
 
 - **Browse** no longer leaves an empty application row behind when the file
   dialog is cancelled. The row is created only once a file has been chosen.
+- An application started minimized can be opened again. The window watcher polls
+  for up to 45 seconds so a launcher that opens its real window late is still
+  minimized, but it used to re-minimize every matching window on every poll,
+  including one the user had just restored. It now acts on each window once.
+
+### Added
+
+- **Settings -> Wait after display changes**, applied between the display
+  layout and any application being started or closed. Windows returns from the
+  topology call before the monitors have finished re-syncing, and an application
+  started into that window can open on the wrong monitor or at the wrong size.
+  Defaults to 3000 ms; set it to 0 for the previous behaviour.
+- `SHERPA_TEST_FILTER` runs a subset of the test executable by name substring.
 
 ## 0.4.6
 

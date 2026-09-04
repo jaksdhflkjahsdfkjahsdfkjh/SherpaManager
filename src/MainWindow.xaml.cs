@@ -125,6 +125,7 @@ public partial class MainWindow : Window
         // entry from Task Manager without Sherpa ever knowing.
         _document.Settings.StartWithWindows = _startup.IsRegistered;
         StartWithWindowsCheckBox.IsChecked = _document.Settings.StartWithWindows;
+        DisplaySettleDelayBox.Text = _document.Settings.DisplaySettleDelayMs.ToString();
         RebuildStartupProfileCombo();
         _loadingSettings = false;
         UpdateHotkeyButton();
@@ -348,6 +349,26 @@ public partial class MainWindow : Window
         StartupProfileCombo.ItemsSource = options;
         StartupProfileCombo.SelectedValue = _document.Settings.ActivateProfileOnStartup;
         if (StartupProfileCombo.SelectedItem is null) StartupProfileCombo.SelectedIndex = 0;
+    }
+
+    private async void DisplaySettleDelay_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (_loadingSettings || !IsLoaded || !_profilesLoaded) return;
+
+        var text = DisplaySettleDelayBox.Text.Trim();
+        if (!int.TryParse(text, out var requested) || requested < 0)
+        {
+            StatusText.Text = "The display settle delay must be a whole number of milliseconds.";
+            DisplaySettleDelayBox.Text = _document.Settings.DisplaySettleDelayMs.ToString();
+            return;
+        }
+
+        _document.Settings.DisplaySettleDelayMs = requested;
+        // The setter clamps, so show what was actually stored rather than what was typed.
+        DisplaySettleDelayBox.Text = _document.Settings.DisplaySettleDelayMs.ToString();
+        if (_document.Settings.DisplaySettleDelayMs != requested)
+            StatusText.Text = $"The display settle delay was capped at {AppSettings.MaximumDisplaySettleDelayMs} ms.";
+        await SaveAsync();
     }
 
     private async void StartupProfileCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)

@@ -193,6 +193,9 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null, IDiagn
         var minimized = false;
         string? failureMessage = null;
         var deadline = DateTime.UtcNow + timeout;
+        // Every window this watcher has already seen, minimized by it or not.
+        // Restoring one must not be undone on the next poll.
+        var seenWindows = new HashSet<IntPtr>();
         try
         {
             do
@@ -206,7 +209,7 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null, IDiagn
                     {
                         if (HasReachedFinalManagedProcess(processes, target))
                             _pendingLaunches.TryRemove(target.IdentityKey, out _);
-                        MinimizeVisibleWindows(processIds);
+                        MinimizeVisibleWindows(processIds, seenWindows);
                     }
                 }
                 finally { DisposeAll(processes); }
@@ -214,7 +217,8 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null, IDiagn
                 await Task.Delay(250, registration.Token).ConfigureAwait(false);
             } while (DateTime.UtcNow < deadline);
 
-            minimized = await VerifyMinimizedStateAsync(app, target, registration.Token).ConfigureAwait(false);
+            minimized = await VerifyMinimizedStateAsync(app, target, registration.Token, seenWindows)
+                .ConfigureAwait(false);
             completed = true;
             return minimized;
         }
@@ -243,14 +247,14 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null, IDiagn
     }
 
     private async Task<bool> VerifyMinimizedStateAsync(LaunchApplication app, ResolvedLaunchTarget target,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, HashSet<IntPtr>? seenWindows = null)
     {
         var processes = GetMatchingProcesses(app, target);
         try
         {
             var running = processes.Where(IsAlive).ToList();
             if (running.Count == 0 || !HasReachedFinalManagedProcess(running, target)) return false;
-            MinimizeVisibleWindows(running.Select(process => (uint)process.Id).ToHashSet());
+            MinimizeVisibleWindows(running.Select(process => (uint)process.Id).ToHashSet(), seenWindows);
         }
         finally { DisposeAll(processes); }
 
@@ -937,13 +941,29 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null, IDiagn
         return runningProcesses;
     }
 
-    private static void MinimizeVisibleWindows(HashSet<uint> processIds)
+    /// <summary>
+    /// Minimizes visible windows of the given processes, acting on each window
+    /// handle at most once when <paramref name="seenWindows"/> is supplied.
+    /// </summary>
+    /// <remarks>
+    /// The watcher polls for the whole launch timeout so a launcher that opens its
+    /// real window seconds later still gets minimized. Every window must therefore
+    /// be recorded on first sighting, including one that arrived already minimized
+    /// because the process was started with a minimized window style: recording
+    /// only the windows this code minimized would leave those unknown, and the
+    /// moment the user restored one it would be minimized as if it were new, every
+    /// 250 ms, until the timeout expired.
+    /// </remarks>
+    private static void MinimizeVisibleWindows(HashSet<uint> processIds,
+        HashSet<IntPtr>? seenWindows = null)
     {
         EnumWindows((window, _) =>
         {
             GetWindowThreadProcessId(window, out var processId);
-            if (processIds.Contains(processId) && IsWindowVisible(window) && !IsIconic(window))
-                ShowWindowAsync(window, SwMinimize);
+            if (!processIds.Contains(processId) || !IsWindowVisible(window)) return true;
+
+            var firstSighting = seenWindows is null || seenWindows.Add(window);
+            if (firstSighting && !IsIconic(window)) ShowWindowAsync(window, SwMinimize);
             return true;
         }, IntPtr.Zero);
     }

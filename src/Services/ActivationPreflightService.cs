@@ -84,6 +84,13 @@ public sealed class ActivationPreflightService(IDisplayConfigurationService disp
                 "The layout is still reapplied, but nothing should visibly change."));
 
         section.Items.Add(DescribeConfirmation(document, target.Display));
+
+        var settleDelay = document.Settings.DisplaySettleDelayMs;
+        if (settleDelay > 0)
+            section.Items.Add(new PreflightItem(PreflightSeverity.Info,
+                $"Applications wait {settleDelay / 1000.0:0.#} seconds after the displays change.",
+                "This gives the monitors time to finish switching before anything is started or closed."));
+
         return section;
     }
 
