@@ -38,9 +38,10 @@ Releases are cut from tags. The release workflow refuses to run if the tag and t
 1. Update `Version`, `AssemblyVersion`, `FileVersion`, and `InformationalVersion` in [Directory.Build.props](Directory.Build.props). This is the only place the version is declared.
 2. Move the `Unreleased` entries in [CHANGELOG.md](CHANGELOG.md) under a new `## <version>` heading. The release notes are extracted from that section verbatim.
 3. Build and test in Release configuration with no warnings or errors.
-4. Tag the commit `v<version>` and push the tag.
+4. Push the commit and let it merge to `main` **before** tagging. GitHub runs a workflow as it exists at the tagged commit, so tagging a commit that predates a workflow change silently does nothing.
+5. Tag the merged commit `v<version>` and push the tag.
 
-[.github/workflows/release.yml](.github/workflows/release.yml) then verifies the version, builds, runs the tests, publishes framework-dependent and self-contained `win-x64` archives, checks that both executables really are x64, writes `SHA256SUMS.txt`, and opens a **draft** GitHub release. Review the draft and publish it manually once the archives have been checked on real hardware.
+[.github/workflows/release.yml](.github/workflows/release.yml) then verifies the version, builds, runs the tests, publishes framework-dependent, self-contained, and portable single-file `win-x64` builds, checks that each executable really is x64, compiles the Inno Setup installer from [installer/SherpaManager.iss](installer/SherpaManager.iss), writes `SHA256SUMS.txt` over all four assets, and opens a **draft** GitHub release. Review the draft and publish it manually once the archives have been checked on real hardware.
 
 To package without releasing, run the workflow manually from the Actions tab and supply a version. Manual runs upload the archives as workflow artifacts and do not create a release.
 

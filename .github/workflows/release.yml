@@ -96,11 +96,26 @@ jobs:
           --self-contained true
           --output build/publish/self-contained
 
+      # One file, no unzipping and no installed .NET runtime. Safe for this app
+      # because it resolves its own location through Environment.ProcessPath
+      # rather than Assembly.Location, which single-file publishing breaks.
+      - name: Publish portable single-file build
+        run: >
+          dotnet publish src/SherpaManager.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true
+          -p:DebugType=none
+          --output build/publish/portable
+
       - name: Verify published executables are x64
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          foreach ($dir in @('framework-dependent', 'self-contained')) {
+          foreach ($dir in @('framework-dependent', 'self-contained', 'portable')) {
             $exe = "build/publish/$dir/SherpaManager.exe"
             if (-not (Test-Path $exe)) { throw "Missing $exe" }
 
@@ -114,6 +129,25 @@ jobs:
 
             Write-Host "$exe is x64."
           }
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress --yes
+
+      - name: Build installer
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path build/artifacts | Out-Null
+
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) {
+            throw "ISCC.exe not found at $iscc. Did the Inno Setup install step succeed?"
+          }
+
+          & $iscc "/DAppVersion=$env:VERSION" installer\SherpaManager.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE." }
 
       - name: Create archives and checksums
         shell: pwsh
@@ -135,8 +169,13 @@ jobs:
             Write-Host "Created $destination"
           }
 
+          $portable = Join-Path 'build/artifacts' "SherpaManager-v$version-win-x64-portable.exe"
+          Copy-Item 'build/publish/portable/SherpaManager.exe' $portable -Force
+          Write-Host "Created $portable"
+
           # sha256sum-compatible format: hash, two spaces, file name.
-          $checksums = Get-ChildItem build/artifacts -Filter *.zip |
+          $checksums = Get-ChildItem build/artifacts -File |
+            Where-Object { $_.Extension -in '.zip', '.exe' } |
             Sort-Object Name |
             ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name }
 

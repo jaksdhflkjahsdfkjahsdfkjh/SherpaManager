@@ -34,17 +34,21 @@ Sherpa Manager is x64 only. NVIDIA Surround support binds `nvapi64.dll` directly
 
 ## Install
 
-Download the latest archive from the [Releases page](../../releases) and unpack it anywhere you like. There is no installer and nothing is written outside your user profile.
+Download from the [Releases page](../../releases). Most people want the installer. Sherpa Manager keeps its profiles, display snapshots, and logs under `%APPDATA%\SherpaManager` and `%LOCALAPPDATA%\SherpaManager`, and writes nothing else outside your user profile.
 
-| Archive | Contains | Choose it when |
+| Download | Size | Choose it when |
 | --- | --- | --- |
-| `SherpaManager-v<version>-win-x64.zip` | Framework-dependent build | You have, or are willing to install, the .NET 8 Desktop Runtime. Much smaller. |
-| `SherpaManager-v<version>-win-x64-self-contained.zip` | Self-contained build | You want a single folder that runs without installing .NET. |
+| `SherpaManager-v<version>-win-x64-setup.exe` | ~60 MB | **Recommended.** Installs per user with no administrator prompt, adds Start Menu and optional desktop shortcuts, and registers an uninstaller. Includes .NET, so nothing else is needed. |
+| `SherpaManager-v<version>-win-x64-portable.exe` | ~70 MB | You want one executable you can run from anywhere, including a USB stick, with nothing installed. |
+| `SherpaManager-v<version>-win-x64.zip` | ~1.5 MB | You already have the .NET 8 Desktop Runtime and want the smallest download. Unpack and run `SherpaManager.exe`. |
+| `SherpaManager-v<version>-win-x64-self-contained.zip` | ~68 MB | You want a portable folder rather than a single file, without installing .NET. |
+
+Uninstalling through the installer leaves your captured profiles in place, so reinstalling does not lose your layouts. Delete `%APPDATA%\SherpaManager` by hand to remove them.
 
 Every release also publishes `SHA256SUMS.txt`. Verify a download before running it:
 
 ```powershell
-Get-FileHash .\SherpaManager-v<version>-win-x64.zip -Algorithm SHA256
+Get-FileHash .\SherpaManager-v<version>-win-x64-setup.exe -Algorithm SHA256
 ```
 
 Compare the printed hash with the matching line in `SHA256SUMS.txt`. Releases are unsigned, so Windows SmartScreen may warn on first run; see [Known limitations](#known-limitations).

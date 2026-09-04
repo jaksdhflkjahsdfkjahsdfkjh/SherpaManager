@@ -16,6 +16,13 @@ this file must all agree; the release workflow fails the build when they do not.
 - x64 release packaging: a tag-triggered workflow that publishes
   framework-dependent and self-contained `win-x64` ZIP archives with a
   `SHA256SUMS.txt` checksum file.
+- A Windows installer (`...-win-x64-setup.exe`). It installs per user by
+  default so no administrator prompt appears, offers an all-users install,
+  creates Start Menu and optional desktop shortcuts, and registers an
+  uninstaller. Captured profiles and display snapshots under
+  `%APPDATA%\SherpaManager` are left in place when uninstalling.
+- A portable single-file build (`...-win-x64-portable.exe`). One executable,
+  no unpacking and no separately installed .NET runtime.
 - This changelog.
 
 ### Changed
