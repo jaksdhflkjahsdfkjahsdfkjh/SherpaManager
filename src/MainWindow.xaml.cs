@@ -688,6 +688,14 @@ public partial class MainWindow : Window
         await SaveAsync();
     }
 
+    private void RenameProfile_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedProfile is null) return;
+        MainTabs.SelectedIndex = 0;
+        ProfileNameBox.Focus();
+        ProfileNameBox.SelectAll();
+    }
+
     private async void DuplicateProfile_Click(object sender, RoutedEventArgs e)
     {
         if (SelectedProfile is not { } selected) return;
@@ -699,7 +707,12 @@ public partial class MainWindow : Window
 
     private async void DeleteProfile_Click(object sender, RoutedEventArgs e)
     {
-        if (SelectedProfile is not { } selected || _document.Profiles.Count == 1) return;
+        if (SelectedProfile is not { } selected) return;
+        if (_document.Profiles.Count == 1)
+        {
+            StatusText.Text = "The last profile cannot be deleted. Create another one first.";
+            return;
+        }
         var result = System.Windows.MessageBox.Show($"Delete the profile “{selected.Name}”?", "Sherpa Manager",
             MessageBoxButton.YesNo, MessageBoxImage.Question);
         if (result != MessageBoxResult.Yes) return;
@@ -747,12 +760,6 @@ public partial class MainWindow : Window
     private async void BrowseApplication_Click(object sender, RoutedEventArgs e)
     {
         if (SelectedProfile is not { } profile) return;
-        var app = ApplicationsGrid.SelectedItem as LaunchApplication;
-        if (app is null)
-        {
-            app = new LaunchApplication();
-            profile.Applications.Add(app);
-        }
 
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
@@ -760,20 +767,34 @@ public partial class MainWindow : Window
             Filter = "Applications and shortcuts (*.exe;*.lnk;*.url;*.bat;*.cmd)|*.exe;*.lnk;*.url;*.bat;*.cmd|All files (*.*)|*.*",
             CheckFileExists = true
         };
+        // Ask first. A cancelled dialog must not leave an empty row behind, so
+        // nothing is added to the profile until there is a file to put in it.
         if (dialog.ShowDialog(this) != true) return;
+
+        var app = ApplicationsGrid.SelectedItem as LaunchApplication;
+        var added = app is null;
+        if (app is null)
+        {
+            app = new LaunchApplication();
+            profile.Applications.Add(app);
+            ApplicationsGrid.SelectedItem = app;
+        }
+
         app.Path = dialog.FileName;
         if (app.Name == "New application") app.Name = Path.GetFileNameWithoutExtension(dialog.FileName);
         if (string.IsNullOrWhiteSpace(app.WorkingDirectory)) app.WorkingDirectory = Path.GetDirectoryName(dialog.FileName) ?? string.Empty;
         ApplicationsGrid.Items.Refresh();
         if (!await SaveAsync()) return;
+
+        var verb = added ? "Added" : "Updated";
         try
         {
             var resolved = new LaunchTargetResolver().Resolve(app);
             StatusText.Text = resolved.IsShortcutOrProtocol && string.IsNullOrWhiteSpace(resolved.ProcessName)
-                ? $"Added {app.Name}, but its launched process could not be inferred. Select the actual executable when possible so Sherpa can manage it."
+                ? $"{verb} {app.Name}, but its launched process could not be inferred. Select the actual executable when possible so Sherpa can manage it."
                 : resolved.IsShortcutOrProtocol && !resolved.HasExplicitProcessName
-                    ? $"Added {app.Name}. Sherpa associated it with {resolved.ProcessName} for minimizing and closing."
-                : $"Added {app.Name}.";
+                    ? $"{verb} {app.Name}. Sherpa associated it with {resolved.ProcessName} for minimizing and closing."
+                : $"{verb} {app.Name}.";
         }
         catch (Exception ex) { StatusText.Text = ex.Message; }
     }
@@ -797,6 +818,18 @@ public partial class MainWindow : Window
         if (sender is not ListBoxItem { DataContext: SwitchProfile profile })
             return;
 
+        _profileBeforeSettings = profile;
+        ProfilesList.SelectedItem = profile;
+        MainTabs.SelectedIndex = 0;
+    }
+
+    /// <summary>
+    /// A ListBox does not select on right-click, so the context menu would act on
+    /// whichever profile happened to be selected instead of the one clicked.
+    /// </summary>
+    private void ProfileItem_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not ListBoxItem { DataContext: SwitchProfile profile }) return;
         _profileBeforeSettings = profile;
         ProfilesList.SelectedItem = profile;
         MainTabs.SelectedIndex = 0;

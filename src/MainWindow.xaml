@@ -57,9 +57,18 @@
                 <ListBox x:Name="ProfilesList" Grid.Row="2" Background="Transparent" BorderThickness="0"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                          SelectionChanged="ProfilesList_SelectionChanged">
+                    <ListBox.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="Rename" Click="RenameProfile_Click"/>
+                            <MenuItem Header="Duplicate" Click="DuplicateProfile_Click"/>
+                            <Separator/>
+                            <MenuItem Header="Delete" Click="DeleteProfile_Click"/>
+                        </ContextMenu>
+                    </ListBox.ContextMenu>
                     <ListBox.ItemContainerStyle>
                         <Style TargetType="ListBoxItem">
                             <EventSetter Event="PreviewMouseLeftButtonDown" Handler="ProfileItem_PreviewMouseLeftButtonDown"/>
+                            <EventSetter Event="PreviewMouseRightButtonDown" Handler="ProfileItem_PreviewMouseRightButtonDown"/>
                             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
                             <Setter Property="Padding" Value="0"/>
                             <Setter Property="Margin" Value="0,0,0,7"/>
@@ -121,10 +130,14 @@
                     <Grid Margin="0,0,0,25">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                         <StackPanel>
-                            <TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" FontSize="28" FontWeight="Bold"
-                                     Background="Transparent" BorderThickness="0" Padding="0" MaxLength="40"/>
+                            <TextBox x:Name="ProfileNameBox" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
+                                     FontSize="28" FontWeight="Bold" MaxLength="40"
+                                     Background="Transparent" BorderThickness="0,0,0,1" Padding="0,0,0,2"
+                                     BorderBrush="{StaticResource BorderBrush}"
+                                     ToolTip="Click to rename this profile."/>
                             <TextBox Text="{Binding Description, UpdateSourceTrigger=PropertyChanged}" Foreground="{StaticResource MutedTextBrush}"
-                                     Background="Transparent" BorderThickness="0" Padding="0" Margin="2,7,0,0" MaxLength="120"/>
+                                     Background="Transparent" BorderThickness="0" Padding="0" Margin="2,7,0,0" MaxLength="120"
+                                     ToolTip="Click to describe when you use this setup."/>
                         </StackPanel>
                         <Button x:Name="ActivateButton" Grid.Column="1" Style="{StaticResource PrimaryButton}" Content="ACTIVATE PROFILE"
                                 Click="ActivateProfile_Click" VerticalAlignment="Center" Margin="18,0,0,0"/>
@@ -249,12 +262,6 @@
                         </Grid>
                     </Border>
 
-                    <Grid>
-                        <StackPanel Orientation="Horizontal">
-                            <Button Content="Duplicate profile" Click="DuplicateProfile_Click" Margin="0,0,8,0"/>
-                            <Button Content="Delete profile" Click="DeleteProfile_Click"/>
-                        </StackPanel>
-                    </Grid>
                 </StackPanel>
             </ScrollViewer>
                 </TabItem>

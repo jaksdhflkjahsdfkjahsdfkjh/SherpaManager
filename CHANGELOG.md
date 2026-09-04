@@ -33,6 +33,21 @@ this file must all agree; the release workflow fails the build when they do not.
 
 - Duplicating a profile no longer copies its global shortcut, since two profiles
   cannot own one combination.
+- Renaming, duplicating, and deleting a profile are reachable without scrolling.
+  Right-clicking a profile in the list offers Rename, Duplicate, and Delete;
+  previously those buttons sat below the application list where they were easy
+  to miss. The profile name field is underlined so it reads as editable.
+- Context menus follow the Sherpa dark theme instead of the Windows light
+  chrome, which rendered light text on a white background.
+- Right-clicking a profile now selects it, so the menu always acts on the
+  profile that was clicked rather than the one previously selected.
+- Refusing to delete the last remaining profile now says so instead of doing
+  nothing when the button is clicked.
+
+### Fixed
+
+- **Browse** no longer leaves an empty application row behind when the file
+  dialog is cancelled. The row is created only once a file has been chosen.
 
 ## 0.4.6
 
