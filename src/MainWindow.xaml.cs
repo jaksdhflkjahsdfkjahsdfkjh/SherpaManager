@@ -75,6 +75,7 @@ public partial class MainWindow : Window
         _hotkeys.HotkeyPressed += Hotkeys_HotkeyPressed;
         _processes.PendingCloseCompleted += ProcessService_PendingCloseCompleted;
         _processes.PendingMinimizationCompleted += ProcessService_PendingMinimizationCompleted;
+        VersionText.Text = AppVersion.Display;
         _applicationIcon = TryLoadApplicationIcon();
         _trayIcon = new Forms.NotifyIcon
         {

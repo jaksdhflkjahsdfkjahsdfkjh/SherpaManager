@@ -76,6 +76,7 @@ internal static class Program
             ("Audio preview reports the pending change", TestAudioPreviewAsync),
             ("A monitor audio endpoint is waited for after the display comes up", TestAudioEndpointAppearsLateAsync),
             ("Audio input switches independently of output", TestAudioInputAsync),
+            ("The displayed version drops build metadata", TestAppVersionFormatAsync),
             ("Display layouts survive layouts that cannot be drawn", TestDisplayLayoutEdgeCasesAsync),
             ("The display layout window renders every monitor", TestDisplayLayoutWindowRendersAsync)
         };
@@ -1868,6 +1869,31 @@ internal static class Program
             "A profile that changes no displays must not wait for an absent audio device.");
         Assert(quietReports.All(message => !message.Contains("Waiting for", StringComparison.OrdinalIgnoreCase)),
             "No wait should be reported when no display change could produce the device.");
+    }
+
+    private static Task TestAppVersionFormatAsync()
+    {
+        // The SDK appends the commit to the informational version; the window
+        // corner should show the human version, not a 40-character hash.
+        Assert(AppVersion.Format("0.5.0+c3c37dae280bc0e440c8feb0a69d4f568e5d15c8", null) == "v0.5.0",
+            "Build metadata should be dropped.");
+        Assert(AppVersion.Format("0.5.0", null) == "v0.5.0", "A plain informational version should be used as-is.");
+        Assert(AppVersion.Format("  0.5.1  ", null) == "v0.5.1", "Surrounding space should be trimmed.");
+
+        // Falling back to the assembly version drops the revision, which is always
+        // zero for this project.
+        Assert(AppVersion.Format(null, new Version(0, 5, 0, 0)) == "v0.5.0",
+            "The assembly version should render without its revision.");
+        Assert(AppVersion.Format("", new Version(1, 2, 3, 4)) == "v1.2.3",
+            "An empty informational version should fall back to the assembly version.");
+        Assert(AppVersion.Format(null, new Version(1, 2)) == "v1.2.0",
+            "A two-part assembly version should not produce a negative build number.");
+        Assert(AppVersion.Format(null, null) == "v0.0.0", "There should always be something to show.");
+
+        // The real value has to be usable in the corner of a window.
+        Assert(AppVersion.Display.StartsWith('v') && AppVersion.Display.Length is > 1 and < 20,
+            $"'{AppVersion.Display}' is not a sensible label.");
+        return Task.CompletedTask;
     }
 
     private static async Task TestAudioInputAsync()

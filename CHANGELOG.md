@@ -25,6 +25,8 @@ Quality-of-life release.
   after the display itself is usable. A device that is not connected, or a switch
   Windows refuses, is reported as a warning and never fails the profile switch.
   Output and input are independent: a profile may set either, both, or neither.
+- The application version is shown in the bottom right corner of the window, so
+  a bug report can name the exact build without opening Settings.
 - **View layout** in the profile editor draws the monitors a profile will
   arrange, to scale and in their real positions, with the primary display
   highlighted and each panel labelled with its resolution, refresh rate, and

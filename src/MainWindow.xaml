@@ -419,5 +419,14 @@
                 </Border>
             </Border>
         </Grid>
+
+        <!-- Spans both columns and sits above them, so the version stays in the
+             window corner on every page. Not hit-testable: it must never take a
+             click meant for what is underneath. -->
+        <TextBlock x:Name="VersionText" Grid.ColumnSpan="2"
+                   HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                   Margin="0,0,12,8" FontSize="11" Opacity="0.55"
+                   IsHitTestVisible="False" Panel.ZIndex="10"
+                   Foreground="{StaticResource MutedTextBrush}"/>
     </Grid>
 </Window>
