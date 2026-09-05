@@ -99,51 +99,61 @@ public sealed class ActivationPreflightService(IDisplayConfigurationService disp
 
     private PreflightSection BuildAudioSection(SwitchProfile target, bool displayWillChange)
     {
-        var section = new PreflightSection("Audio output");
+        var section = new PreflightSection("Audio");
 
-        if (string.IsNullOrWhiteSpace(target.AudioOutputDeviceId))
+        DescribeAudioEndpoint(section, "output", target.AudioOutputDeviceId, target.AudioOutputDeviceName,
+            audio is null ? null : audio.GetOutputDevices, audio is null ? null : audio.GetDefaultOutputDevice,
+            displayWillChange);
+        DescribeAudioEndpoint(section, "input", target.AudioInputDeviceId, target.AudioInputDeviceName,
+            audio is null ? null : audio.GetInputDevices, audio is null ? null : audio.GetDefaultInputDevice,
+            displayWillChange);
+        return section;
+    }
+
+    private void DescribeAudioEndpoint(PreflightSection section, string kind, string deviceId, string deviceName,
+        Func<IReadOnlyList<AudioDevice>>? list, Func<AudioDevice?>? current, bool displayWillChange)
+    {
+        if (string.IsNullOrWhiteSpace(deviceId))
         {
             section.Items.Add(new PreflightItem(PreflightSeverity.Info,
-                "The audio output will not change.",
-                "This profile is set to leave the default playback device alone."));
-            return section;
+                $"The audio {kind} will not change.",
+                $"This profile is set to leave the default {(kind == "output" ? "playback" : "recording")} device alone."));
+            return;
         }
 
-        var wanted = target.AudioOutputDeviceName is { Length: > 0 } name ? name : "the saved device";
-        if (audio is null || !audio.IsAvailable)
+        var wanted = deviceName is { Length: > 0 } name ? name : "the saved device";
+        if (audio is null || !audio.IsAvailable || list is null || current is null)
         {
             section.Items.Add(new PreflightItem(PreflightSeverity.Caution,
-                $"Audio should switch to {wanted}, but Windows audio could not be read.",
+                $"The audio {kind} should switch to {wanted}, but Windows audio could not be read.",
                 "The switch will continue and report a warning."));
-            return section;
+            return;
         }
 
-        var current = audio.GetDefaultOutputDevice();
-        if (current is not null && current.Id == target.AudioOutputDeviceId)
+        var active = current();
+        if (active is not null && active.Id == deviceId)
         {
-            section.Items.Add(new PreflightItem(PreflightSeverity.Info,
-                $"Audio output is already {current.Name}."));
-            return section;
+            section.Items.Add(new PreflightItem(PreflightSeverity.Info, $"Audio {kind} is already {active.Name}."));
+            return;
         }
 
-        if (audio.GetOutputDevices().All(device => device.Id != target.AudioOutputDeviceId))
+        if (list().All(device => device.Id != deviceId))
         {
             // A monitor's audio endpoint only exists once that monitor is on, so a
             // device missing now may well arrive as part of this very switch.
             section.Items.Add(displayWillChange
                 ? new PreflightItem(PreflightSeverity.Caution,
-                    $"The audio device {wanted} is not connected yet.",
-                    "If it belongs to a monitor this profile enables, Sherpa waits for it to appear after the displays change. Otherwise the output is left as it is.")
+                    $"The audio {kind} device {wanted} is not connected yet.",
+                    "If it belongs to a monitor this profile enables, Sherpa waits for it to appear after the displays change. Otherwise it is left as it is.")
                 : new PreflightItem(PreflightSeverity.Problem,
-                    $"The audio device {wanted} is not connected.",
-                    "The output will be left as it is and the switch will report a warning."));
-            return section;
+                    $"The audio {kind} device {wanted} is not connected.",
+                    "It will be left as it is and the switch will report a warning."));
+            return;
         }
 
         section.Items.Add(new PreflightItem(PreflightSeverity.Info,
-            $"Switch audio output to {wanted}.",
-            current is null ? null : $"Currently {current.Name}. Playback and communications are both changed."));
-        return section;
+            $"Switch audio {kind} to {wanted}.",
+            active is null ? null : $"Currently {active.Name}. Ordinary use and communications are both changed."));
     }
 
     private static PreflightItem DescribeConfirmation(ProfileDocument document, DisplaySnapshot desired)

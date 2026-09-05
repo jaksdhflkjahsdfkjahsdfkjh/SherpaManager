@@ -10,6 +10,8 @@ public sealed class SwitchProfile : ObservableObject
     private string _hotkey = string.Empty;
     private string _audioOutputDeviceId = string.Empty;
     private string _audioOutputDeviceName = string.Empty;
+    private string _audioInputDeviceId = string.Empty;
+    private string _audioInputDeviceName = string.Empty;
     private DisplaySnapshot? _display;
     private DateTime? _lastActivatedUtc;
     private NvidiaSurroundMode _nvidiaSurroundMode;
@@ -36,6 +38,19 @@ public sealed class SwitchProfile : ObservableObject
         get => _audioOutputDeviceName;
         set => SetProperty(ref _audioOutputDeviceName, value);
     }
+
+    /// <summary>Windows endpoint id to make the default recording device, or empty to leave it alone.</summary>
+    public string AudioInputDeviceId
+    {
+        get => _audioInputDeviceId;
+        set => SetProperty(ref _audioInputDeviceId, value);
+    }
+
+    public string AudioInputDeviceName
+    {
+        get => _audioInputDeviceName;
+        set => SetProperty(ref _audioInputDeviceName, value);
+    }
     public DisplaySnapshot? Display { get => _display; set { if (SetProperty(ref _display, value)) OnPropertyChanged(nameof(DisplaySummary)); } }
     public DateTime? LastActivatedUtc { get => _lastActivatedUtc; set => SetProperty(ref _lastActivatedUtc, value); }
     public NvidiaSurroundMode NvidiaSurroundMode { get => _nvidiaSurroundMode; set => SetProperty(ref _nvidiaSurroundMode, value); }
@@ -52,6 +67,8 @@ public sealed class SwitchProfile : ObservableObject
         NvidiaSurroundMode = NvidiaSurroundMode,
         AudioOutputDeviceId = AudioOutputDeviceId,
         AudioOutputDeviceName = AudioOutputDeviceName,
+        AudioInputDeviceId = AudioInputDeviceId,
+        AudioInputDeviceName = AudioInputDeviceName,
         Display = Display is null ? null : new DisplaySnapshot
         {
             CapturedAtUtc = Display.CapturedAtUtc,

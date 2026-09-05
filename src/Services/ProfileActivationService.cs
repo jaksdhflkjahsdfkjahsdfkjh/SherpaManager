@@ -43,7 +43,8 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
             ["applicationCount"] = target.Applications.Count,
             ["hasDisplayLayout"] = target.Display is not null,
             ["surroundMode"] = target.NvidiaSurroundMode,
-            ["audioDeviceRequested"] = !string.IsNullOrWhiteSpace(target.AudioOutputDeviceId),
+            ["audioOutputRequested"] = !string.IsNullOrWhiteSpace(target.AudioOutputDeviceId),
+            ["audioInputRequested"] = !string.IsNullOrWhiteSpace(target.AudioInputDeviceId),
             ["audioServiceAvailable"] = audio is not null
         });
         SwitchProfile? previous = null;
@@ -113,7 +114,7 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
 
             // Before applications start: many sim and voice applications read the
             // default output once at launch and never look again.
-            await ApplyAudioOutputAsync(target, displayApplied, report, warnings, cancellationToken);
+            await ApplyAudioAsync(target, displayApplied, report, warnings, cancellationToken);
             LogStage("audio.completed");
 
             if (previous is not null && previous.Id != target.Id)
@@ -242,47 +243,65 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
     /// is a warning, never a rollback: audio is recoverable in two clicks and is
     /// not worth abandoning an otherwise good display and application switch.
     /// </summary>
-    private async Task ApplyAudioOutputAsync(SwitchProfile target, bool displayApplied, Action<string> report,
+    private async Task ApplyAudioAsync(SwitchProfile target, bool displayApplied, Action<string> report,
         List<string> warnings, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(target.AudioOutputDeviceId) || audio is null)
+        if (audio is null)
         {
             // Logged rather than returned quietly: a silent skip here is
             // indistinguishable from a switch that did not work.
-            _diagnostics.Write("info", "activation.audio.skipped",
-                audio is null ? "No audio service was supplied." : "The profile selects no audio device.");
+            _diagnostics.Write("info", "activation.audio.skipped", "No audio service was supplied.");
             return;
         }
 
-        var wanted = target.AudioOutputDeviceName is { Length: > 0 } name ? name : "the saved device";
+        await ApplyAudioEndpointAsync("output", target.AudioOutputDeviceId, target.AudioOutputDeviceName,
+            audio.GetOutputDevices, audio.GetDefaultOutputDevice, target, displayApplied, report, warnings,
+            cancellationToken);
+        await ApplyAudioEndpointAsync("input", target.AudioInputDeviceId, target.AudioInputDeviceName,
+            audio.GetInputDevices, audio.GetDefaultInputDevice, target, displayApplied, report, warnings,
+            cancellationToken);
+    }
+
+    private async Task ApplyAudioEndpointAsync(string kind, string deviceId, string deviceName,
+        Func<IReadOnlyList<AudioDevice>> list, Func<AudioDevice?> current, SwitchProfile target,
+        bool displayApplied, Action<string> report, List<string> warnings, CancellationToken cancellationToken)
+    {
+        if (audio is null || string.IsNullOrWhiteSpace(deviceId))
+        {
+            _diagnostics.Write("info", "activation.audio.skipped", $"The profile selects no audio {kind} device.");
+            return;
+        }
+
+        var wanted = deviceName is { Length: > 0 } name ? name : "the saved device";
         try
         {
-            if (audio.GetDefaultOutputDevice() is { } current && current.Id == target.AudioOutputDeviceId)
+            if (current() is { } active && active.Id == deviceId)
             {
-                report($"Audio output is already {current.Name}.");
+                report($"Audio {kind} is already {active.Name}.");
                 return;
             }
 
-            if (!await WaitForAudioDeviceAsync(target.AudioOutputDeviceId, displayApplied, wanted, report,
+            if (!await WaitForAudioDeviceAsync(deviceId, displayApplied, kind, wanted, list, report,
                     cancellationToken))
             {
-                var missing = $"The audio device for {target.Name} ({wanted}) is not connected, so the output was left unchanged.";
+                var missing = $"The audio {kind} device for {target.Name} ({wanted}) is not connected, so it was left unchanged.";
                 report(missing);
                 warnings.Add(missing);
                 return;
             }
 
-            report($"Switching audio output to {wanted}…");
-            audio.SetDefaultOutputDevice(target.AudioOutputDeviceId);
+            report($"Switching audio {kind} to {wanted}…");
+            audio.SetDefaultDevice(deviceId);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception exception)
         {
             _diagnostics.Error("activation.audio.failed", exception, new Dictionary<string, object?>
             {
-                ["targetProfileId"] = target.Id
+                ["targetProfileId"] = target.Id,
+                ["kind"] = kind
             });
-            var warning = $"Could not switch the audio output to {wanted}: {exception.Message}";
+            var warning = $"Could not switch the audio {kind} to {wanted}: {exception.Message}";
             report(warning);
             warnings.Add(warning);
         }
@@ -300,19 +319,20 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
     /// display layout: with no display change, an absent device is genuinely
     /// absent and making the user wait would be pointless.
     /// </remarks>
-    private async Task<bool> WaitForAudioDeviceAsync(string deviceId, bool displayApplied, string wanted,
-        Action<string> report, CancellationToken cancellationToken)
+    private async Task<bool> WaitForAudioDeviceAsync(string deviceId, bool displayApplied, string kind,
+        string wanted, Func<IReadOnlyList<AudioDevice>> list, Action<string> report,
+        CancellationToken cancellationToken)
     {
         if (audio is null) return false;
-        if (audio.GetOutputDevices().Any(device => device.Id == deviceId)) return true;
+        if (list().Any(device => device.Id == deviceId)) return true;
         if (!displayApplied) return false;
 
-        report($"Waiting for {wanted} to become available…");
+        report($"Waiting for the {kind} device {wanted} to become available…");
         var deadline = DateTime.UtcNow + AudioEndpointWait;
         while (DateTime.UtcNow < deadline)
         {
             await Task.Delay(500, cancellationToken).ConfigureAwait(false);
-            if (!audio.GetOutputDevices().Any(device => device.Id == deviceId)) continue;
+            if (!list().Any(device => device.Id == deviceId)) continue;
 
             _diagnostics.Write("info", "activation.audio.endpoint_appeared");
             return true;

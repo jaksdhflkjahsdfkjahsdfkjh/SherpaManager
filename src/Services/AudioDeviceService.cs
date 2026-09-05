@@ -15,6 +15,7 @@ namespace SherpaManager.Services;
 public sealed class AudioDeviceService(IDiagnosticLog? diagnostics = null) : IAudioDeviceService
 {
     private const int RenderDataFlow = 0;     // eRender
+    private const int CaptureDataFlow = 1;    // eCapture
     private const int DeviceStateActive = 0x1;
     private const int RoleConsole = 0;
     private const int RoleMultimedia = 1;
@@ -44,14 +45,22 @@ public sealed class AudioDeviceService(IDiagnosticLog? diagnostics = null) : IAu
         }
     }
 
-    public IReadOnlyList<AudioDevice> GetOutputDevices()
+    public IReadOnlyList<AudioDevice> GetOutputDevices() => GetDevices(RenderDataFlow);
+
+    public IReadOnlyList<AudioDevice> GetInputDevices() => GetDevices(CaptureDataFlow);
+
+    public AudioDevice? GetDefaultOutputDevice() => GetDefaultDevice(RenderDataFlow);
+
+    public AudioDevice? GetDefaultInputDevice() => GetDefaultDevice(CaptureDataFlow);
+
+    private IReadOnlyList<AudioDevice> GetDevices(int dataFlow)
     {
         object? enumeratorObject = null;
         try
         {
             enumeratorObject = CreateEnumerator();
             var enumerator = (IMMDeviceEnumerator)enumeratorObject;
-            Check(enumerator.EnumAudioEndpoints(RenderDataFlow, DeviceStateActive, out var collection),
+            Check(enumerator.EnumAudioEndpoints(dataFlow, DeviceStateActive, out var collection),
                 "enumerate audio endpoints");
 
             try
@@ -81,16 +90,16 @@ public sealed class AudioDeviceService(IDiagnosticLog? diagnostics = null) : IAu
         finally { Release(enumeratorObject); }
     }
 
-    public AudioDevice? GetDefaultOutputDevice()
+    private AudioDevice? GetDefaultDevice(int dataFlow)
     {
         object? enumeratorObject = null;
         try
         {
             enumeratorObject = CreateEnumerator();
             var enumerator = (IMMDeviceEnumerator)enumeratorObject;
-            // A machine with no output at all returns a failure here rather than
-            // a null device, so treat any failure as "no default".
-            if (enumerator.GetDefaultAudioEndpoint(RenderDataFlow, RoleConsole, out var device) != 0) return null;
+            // A machine with no endpoint of this kind returns a failure here rather
+            // than a null device, so treat any failure as "no default".
+            if (enumerator.GetDefaultAudioEndpoint(dataFlow, RoleConsole, out var device) != 0) return null;
             try { return TryRead(device); }
             finally { Release(device); }
         }
@@ -102,7 +111,7 @@ public sealed class AudioDeviceService(IDiagnosticLog? diagnostics = null) : IAu
         finally { Release(enumeratorObject); }
     }
 
-    public void SetDefaultOutputDevice(string deviceId)
+    public void SetDefaultDevice(string deviceId)
     {
         if (string.IsNullOrWhiteSpace(deviceId))
             throw new ArgumentException("An audio device identifier is required.", nameof(deviceId));
@@ -114,9 +123,11 @@ public sealed class AudioDeviceService(IDiagnosticLog? diagnostics = null) : IAu
                 ?? throw new InvalidOperationException("Windows did not provide the audio policy configuration object.");
             var policy = (IPolicyConfig)policyObject;
 
-            // Console and Multimedia cover ordinary playback; Communications is the
+            // Console and Multimedia cover ordinary use; Communications is the
             // separate device Windows uses for calls. Setting only one leaves the
             // machine half-switched, which is worse than not switching at all.
+            // The endpoint id carries its own direction, so this is identical for
+            // playback and recording.
             foreach (var role in new[] { RoleConsole, RoleMultimedia, RoleCommunications })
                 Check(policy.SetDefaultEndpoint(deviceId, role), $"set the default audio endpoint for role {role}");
 

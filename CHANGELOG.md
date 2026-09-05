@@ -15,8 +15,8 @@ Quality-of-life release.
 
 ### Added
 
-- Per-profile audio output. A profile can make a chosen playback device the
-  Windows default when it activates, covering both ordinary playback and
+- Per-profile audio output and input. A profile can make a chosen playback and
+  recording device the Windows default when it activates, covering both ordinary playback and
   communications. The switch happens before applications start, because most sim
   and voice applications read the default output once at launch and never look
   again. When the profile also changes displays, Sherpa waits up to 15 seconds
@@ -24,6 +24,7 @@ Quality-of-life release.
   until Windows has finished enabling that monitor, and it arrives some time
   after the display itself is usable. A device that is not connected, or a switch
   Windows refuses, is reported as a warning and never fails the profile switch.
+  Output and input are independent: a profile may set either, both, or neither.
 - **View layout** in the profile editor draws the monitors a profile will
   arrange, to scale and in their real positions, with the primary display
   highlighted and each panel labelled with its resolution, refresh rate, and

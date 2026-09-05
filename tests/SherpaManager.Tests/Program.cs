@@ -75,6 +75,7 @@ internal static class Program
             ("A disconnected audio device warns without failing the switch", TestAudioMissingDeviceAsync),
             ("Audio preview reports the pending change", TestAudioPreviewAsync),
             ("A monitor audio endpoint is waited for after the display comes up", TestAudioEndpointAppearsLateAsync),
+            ("Audio input switches independently of output", TestAudioInputAsync),
             ("Display layouts survive layouts that cannot be drawn", TestDisplayLayoutEdgeCasesAsync),
             ("The display layout window renders every monitor", TestDisplayLayoutWindowRendersAsync)
         };
@@ -1869,6 +1870,73 @@ internal static class Program
             "No wait should be reported when no display change could produce the device.");
     }
 
+    private static async Task TestAudioInputAsync()
+    {
+        var processes = new FakeProcessService();
+        var displays = new FakeDisplayConfigurationService(processes.Events);
+        var audio = new FakeAudioDeviceService(processes.Events)
+        {
+            Devices = { new AudioDevice("speakers", "Desk speakers"), new AudioDevice("headset-out", "Headset") },
+            InputDevices = { new AudioDevice("desk-mic", "Desk mic"), new AudioDevice("headset-mic", "Headset mic") },
+            DefaultId = "speakers",
+            DefaultInputId = "desk-mic"
+        };
+
+        // Output and input are independent: a profile may set either, both, or
+        // neither.
+        var target = new SwitchProfile
+        {
+            Name = "iRacing",
+            AudioInputDeviceId = "headset-mic",
+            AudioInputDeviceName = "Headset mic"
+        };
+        var document = new ProfileDocument { Profiles = { target }, Settings = { DisplaySettleDelayMs = 0 } };
+
+        Assert(await new ProfileActivationService(displays, processes, null, audio)
+            .ActivateAsync(document, target, _ => { }), "The switch should succeed.");
+        Assert(audio.DefaultInputId == "headset-mic", $"The input was left as '{audio.DefaultInputId}'.");
+        Assert(audio.DefaultId == "speakers", "Setting only the input must not disturb the output.");
+
+        // Both at once.
+        var both = new SwitchProfile
+        {
+            Name = "ACC",
+            AudioOutputDeviceId = "headset-out",
+            AudioOutputDeviceName = "Headset",
+            AudioInputDeviceId = "desk-mic",
+            AudioInputDeviceName = "Desk mic"
+        };
+        document.Profiles.Add(both);
+        Assert(await new ProfileActivationService(displays, processes, null, audio)
+            .ActivateAsync(document, both, _ => { }), "The second switch should succeed.");
+        Assert(audio.DefaultId == "headset-out" && audio.DefaultInputId == "desk-mic",
+            $"Expected headset-out/desk-mic, got {audio.DefaultId}/{audio.DefaultInputId}.");
+
+        // A missing microphone is a warning, exactly like a missing speaker.
+        var missing = new SwitchProfile
+        {
+            Name = "Work",
+            AudioInputDeviceId = "absent-mic",
+            AudioInputDeviceName = "Studio mic"
+        };
+        document.Profiles.Add(missing);
+        var reports = new List<string>();
+        Assert(await new ProfileActivationService(displays, processes, null, audio)
+                .ActivateAsync(document, missing, reports.Add),
+            "A missing microphone must not fail the switch.");
+        Assert(reports.Any(message => message.Contains("not connected", StringComparison.OrdinalIgnoreCase)),
+            $"The missing microphone was not reported. Reports: {string.Join(" | ", reports)}");
+
+        // The preview describes both directions.
+        var preview = new ActivationPreflightService(displays, processes, audio);
+        var items = ItemsIn(preview.Build(document, both), "Audio");
+        Assert(Mentions(items, PreflightSeverity.Info, "Switch audio input", "Desk mic") ||
+               Mentions(items, PreflightSeverity.Info, "already", "Desk mic"),
+            "The preview should describe the input device.");
+        Assert(items.Any(item => item.Title.Contains("output", StringComparison.OrdinalIgnoreCase)),
+            "The preview should describe the output device too.");
+    }
+
     private static async Task TestAudioAppliedBeforeLaunchAsync()
     {
         var processes = new FakeProcessService();
@@ -1968,24 +2036,24 @@ internal static class Program
 
         var service = new ActivationPreflightService(displays, processes, audio);
 
-        var unchanged = ItemsIn(service.Build(document, target), "Audio output");
+        var unchanged = ItemsIn(service.Build(document, target), "Audio");
         Assert(Mentions(unchanged, PreflightSeverity.Info, "will not change"),
             "A profile with no audio device should say the output is left alone.");
 
         target.AudioOutputDeviceId = "headset";
         target.AudioOutputDeviceName = "Sim headset";
-        var switching = ItemsIn(service.Build(document, target), "Audio output");
+        var switching = ItemsIn(service.Build(document, target), "Audio");
         Assert(Mentions(switching, PreflightSeverity.Info, "Switch audio output", "Sim headset"),
             "A pending audio change should be listed.");
 
         audio.DefaultId = "headset";
-        var already = ItemsIn(service.Build(document, target), "Audio output");
+        var already = ItemsIn(service.Build(document, target), "Audio");
         Assert(Mentions(already, PreflightSeverity.Info, "already"),
             "No change should be reported when the device is already default.");
 
         audio.Devices.RemoveAll(device => device.Id == "headset");
         audio.DefaultId = "speakers";
-        var missing = ItemsIn(service.Build(document, target), "Audio output");
+        var missing = ItemsIn(service.Build(document, target), "Audio");
         Assert(Mentions(missing, PreflightSeverity.Problem, "not connected"),
             "A disconnected device should be a problem the user sees before switching.");
         return Task.CompletedTask;
@@ -2006,23 +2074,35 @@ internal static class Program
         }
 
         var devices = service.GetOutputDevices();
-        foreach (var device in devices)
+        var inputs = service.GetInputDevices();
+        foreach (var device in devices.Concat(inputs))
         {
             Assert(!string.IsNullOrWhiteSpace(device.Id), "Every endpoint needs an identifier.");
             Assert(!string.IsNullOrWhiteSpace(device.Name), "Every endpoint needs a name.");
         }
         Assert(devices.Select(device => device.Id).Distinct().Count() == devices.Count,
-            "Endpoint identifiers must be unique.");
+            "Playback endpoint identifiers must be unique.");
+        Assert(inputs.Select(device => device.Id).Distinct().Count() == inputs.Count,
+            "Recording endpoint identifiers must be unique.");
+        Assert(devices.All(output => inputs.All(input => input.Id != output.Id)),
+            "Playback and recording endpoints must not share identifiers.");
 
         var current = service.GetDefaultOutputDevice();
         if (current is not null)
             Assert(devices.Any(device => device.Id == current.Id),
-                $"The default endpoint '{current.Name}' was not in the enumerated list.");
+                $"The default playback endpoint '{current.Name}' was not in the enumerated list.");
+
+        var currentInput = service.GetDefaultInputDevice();
+        if (currentInput is not null)
+            Assert(inputs.Any(device => device.Id == currentInput.Id),
+                $"The default recording endpoint '{currentInput.Name}' was not in the enumerated list.");
 
         if (Environment.GetEnvironmentVariable("SHERPA_PROBE_AUDIO") == "1")
         {
-            Console.WriteLine($"[probe] default = {current?.Name ?? "(none)"}");
-            foreach (var device in devices) Console.WriteLine($"[probe]   {device.Name}  ({device.Id})");
+            Console.WriteLine($"[probe] default output = {current?.Name ?? "(none)"}");
+            foreach (var device in devices) Console.WriteLine($"[probe]   out {device.Name}");
+            Console.WriteLine($"[probe] default input  = {currentInput?.Name ?? "(none)"}");
+            foreach (var device in inputs) Console.WriteLine($"[probe]   in  {device.Name}");
         }
         return Task.CompletedTask;
     }
@@ -2512,7 +2592,9 @@ internal static class Program
     private sealed class FakeAudioDeviceService(List<string> events) : IAudioDeviceService
     {
         public List<AudioDevice> Devices { get; } = [];
+        public List<AudioDevice> InputDevices { get; } = [];
         public string? DefaultId { get; set; }
+        public string? DefaultInputId { get; set; }
         public int SetCalls { get; set; }
         public bool ThrowOnSet { get; set; }
         public bool Available { get; set; } = true;
@@ -2533,15 +2615,22 @@ internal static class Program
             return Devices;
         }
 
+        public IReadOnlyList<AudioDevice> GetInputDevices() => InputDevices;
+
         public AudioDevice? GetDefaultOutputDevice() =>
             Devices.FirstOrDefault(device => device.Id == DefaultId);
 
-        public void SetDefaultOutputDevice(string deviceId)
+        public AudioDevice? GetDefaultInputDevice() =>
+            InputDevices.FirstOrDefault(device => device.Id == DefaultInputId);
+
+        public void SetDefaultDevice(string deviceId)
         {
             SetCalls++;
             if (ThrowOnSet) throw new InvalidOperationException("simulated audio failure");
             events.Add("audio:set:" + deviceId);
-            DefaultId = deviceId;
+            // Windows derives the direction from the endpoint itself.
+            if (InputDevices.Any(device => device.Id == deviceId)) DefaultInputId = deviceId;
+            else DefaultId = deviceId;
         }
     }
 

@@ -132,7 +132,7 @@ public partial class MainWindow : Window
         RebuildStartupProfileCombo();
         _loadingSettings = false;
         UpdateHotkeyButton();
-        RebuildAudioOutputCombo();
+        RebuildAudioCombos();
         ApplyHotkeys();
         try { await _store.SaveAsync(_document); }
         catch (Exception ex) { ShowError("Could not save profiles", ex); }
@@ -333,12 +333,12 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Lists the connected playback devices plus a "do not change" entry. A device
-    /// the profile wants but which is not currently connected is kept in the list
-    /// so opening the editor with a headset unplugged does not quietly discard the
+    /// Lists the connected devices plus a "do not change" entry. A device the
+    /// profile wants but which is not currently connected is kept in the list so
+    /// opening the editor with a headset unplugged does not quietly discard the
     /// choice.
     /// </summary>
-    private void RebuildAudioOutputCombo()
+    private void RebuildAudioCombos()
     {
         if (!_profilesLoaded) return;
 
@@ -346,23 +346,32 @@ public partial class MainWindow : Window
         _loadingSettings = true;
         try
         {
-            var options = new List<AudioOutputOption> { new(string.Empty, "Do not change") };
-            options.AddRange(_audio.GetOutputDevices().Select(device => new AudioOutputOption(device.Id, device.Name)));
-
             var profile = SelectedProfile;
-            if (profile is { AudioOutputDeviceId.Length: > 0 } &&
-                options.All(option => option.Id != profile.AudioOutputDeviceId))
-            {
-                var name = profile.AudioOutputDeviceName is { Length: > 0 } saved ? saved : "Saved device";
-                options.Add(new AudioOutputOption(profile.AudioOutputDeviceId, $"{name} (not connected)"));
-            }
-
-            AudioOutputCombo.ItemsSource = options;
-            AudioOutputCombo.SelectedValue = profile?.AudioOutputDeviceId ?? string.Empty;
-            if (AudioOutputCombo.SelectedItem is null) AudioOutputCombo.SelectedIndex = 0;
+            Fill(AudioOutputCombo, _audio.GetOutputDevices(), profile?.AudioOutputDeviceId,
+                profile?.AudioOutputDeviceName);
+            Fill(AudioInputCombo, _audio.GetInputDevices(), profile?.AudioInputDeviceId,
+                profile?.AudioInputDeviceName);
             AudioOutputCombo.IsEnabled = profile is not null;
+            AudioInputCombo.IsEnabled = profile is not null;
         }
         finally { _loadingSettings = wasLoading; }
+
+        static void Fill(System.Windows.Controls.ComboBox combo, IReadOnlyList<AudioDevice> devices,
+            string? selectedId, string? selectedName)
+        {
+            var options = new List<AudioOutputOption> { new(string.Empty, "Do not change") };
+            options.AddRange(devices.Select(device => new AudioOutputOption(device.Id, device.Name)));
+
+            if (selectedId is { Length: > 0 } && options.All(option => option.Id != selectedId))
+            {
+                var name = selectedName is { Length: > 0 } saved ? saved : "Saved device";
+                options.Add(new AudioOutputOption(selectedId, $"{name} (not connected)"));
+            }
+
+            combo.ItemsSource = options;
+            combo.SelectedValue = selectedId ?? string.Empty;
+            if (combo.SelectedItem is null) combo.SelectedIndex = 0;
+        }
     }
 
     private async void AudioOutput_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -372,11 +381,7 @@ public partial class MainWindow : Window
 
         var selected = AudioOutputCombo.SelectedItem as AudioOutputOption;
         profile.AudioOutputDeviceId = selected?.Id ?? string.Empty;
-        // Store the label without the "(not connected)" suffix so it stays correct
-        // once the device comes back.
-        profile.AudioOutputDeviceName = selected is null || selected.Id.Length == 0
-            ? string.Empty
-            : selected.Label.Replace(" (not connected)", string.Empty, StringComparison.Ordinal);
+        profile.AudioOutputDeviceName = DeviceLabel(selected);
 
         StatusText.Text = profile.AudioOutputDeviceId.Length == 0
             ? $"{profile.Name} will leave the audio output unchanged."
@@ -384,11 +389,35 @@ public partial class MainWindow : Window
         await SaveAsync();
     }
 
+    private async void AudioInput_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingSettings || !IsLoaded || !_profilesLoaded) return;
+        if (SelectedProfile is not { } profile) return;
+
+        var selected = AudioInputCombo.SelectedItem as AudioOutputOption;
+        profile.AudioInputDeviceId = selected?.Id ?? string.Empty;
+        profile.AudioInputDeviceName = DeviceLabel(selected);
+
+        StatusText.Text = profile.AudioInputDeviceId.Length == 0
+            ? $"{profile.Name} will leave the audio input unchanged."
+            : $"{profile.Name} will switch audio input to {profile.AudioInputDeviceName}.";
+        await SaveAsync();
+    }
+
+    /// <summary>
+    /// The stored name without the "(not connected)" suffix, so it stays correct
+    /// once the device comes back.
+    /// </summary>
+    private static string DeviceLabel(AudioOutputOption? option) =>
+        option is null || option.Id.Length == 0
+            ? string.Empty
+            : option.Label.Replace(" (not connected)", string.Empty, StringComparison.Ordinal);
+
     private void RefreshAudioDevices_Click(object sender, RoutedEventArgs e)
     {
-        RebuildAudioOutputCombo();
+        RebuildAudioCombos();
         StatusText.Text = _audio.IsAvailable
-            ? "Playback devices refreshed."
+            ? "Playback and recording devices refreshed."
             : "Windows audio devices could not be read.";
     }
 
@@ -893,7 +922,7 @@ public partial class MainWindow : Window
     {
         if (SelectedProfile is { } selectedProfile) _profileBeforeSettings = selectedProfile;
         EndHotkeyCapture();
-        RebuildAudioOutputCombo();
+        RebuildAudioCombos();
         if (!IsLoaded || _openingSettings || SelectedProfile is null) return;
         MainTabs.SelectedIndex = 0;
         await SaveAsync();

@@ -181,15 +181,26 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <TextBlock Text="AUDIO OUTPUT" FontSize="11" FontWeight="SemiBold"
-                                       VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}"/>
-                            <StackPanel Grid.Column="1" Orientation="Horizontal">
-                                <ComboBox x:Name="AudioOutputCombo" Width="330"
+                            <StackPanel>
+                                <TextBlock Text="AUDIO" FontSize="11" FontWeight="SemiBold"
+                                           Foreground="{StaticResource MutedTextBrush}"/>
+                                <TextBlock Text="Output" FontSize="11" Margin="0,12,0,0"
+                                           Foreground="{StaticResource MutedTextBrush}"/>
+                                <TextBlock Text="Input" FontSize="11" Margin="0,16,0,0"
+                                           Foreground="{StaticResource MutedTextBrush}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1">
+                                <Button Content="Refresh" Click="RefreshAudioDevices_Click"
+                                        HorizontalAlignment="Right"
+                                        ToolTip="Re-read the connected playback and recording devices."/>
+                                <ComboBox x:Name="AudioOutputCombo" Width="330" Margin="0,6,0,0"
                                           DisplayMemberPath="Label" SelectedValuePath="Id"
                                           SelectionChanged="AudioOutput_SelectionChanged"
                                           ToolTip="The playback device to make default when this profile is activated."/>
-                                <Button Content="Refresh" Click="RefreshAudioDevices_Click" Margin="8,0,0,0"
-                                        ToolTip="Re-read the connected playback devices."/>
+                                <ComboBox x:Name="AudioInputCombo" Width="330" Margin="0,8,0,0"
+                                          DisplayMemberPath="Label" SelectedValuePath="Id"
+                                          SelectionChanged="AudioInput_SelectionChanged"
+                                          ToolTip="The recording device to make default when this profile is activated."/>
                             </StackPanel>
                         </Grid>
                     </Border>
