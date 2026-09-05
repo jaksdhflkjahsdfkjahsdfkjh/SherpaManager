@@ -20,6 +20,9 @@ public sealed record ProcessCloseResult(ProcessCloseStatus Status, int MatchedCo
         or ProcessCloseStatus.Superseded;
 }
 
+/// <param name="Ready">False when the timeout passed before the rule was met.</param>
+public sealed record ProcessReadinessResult(bool Ready, string Message);
+
 public sealed record ProcessLaunchResult(
     bool Started,
     bool Minimized,

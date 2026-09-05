@@ -175,6 +175,27 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
                     var launchResult = await processes.LaunchAsync(app, cancellationToken);
                     report(launchResult.Message);
                     if (launchResult.Started) startedTargetApplications.Add(app);
+
+                    // Gate the next application on this one being usable, so putting
+                    // applications in order is the whole configuration.
+                    var rule = document.Settings.LaunchReadiness;
+                    if (launchResult.Started && rule != LaunchReadiness.None)
+                    {
+                        // A script, protocol URL, or launcher whose real process
+                        // cannot be matched will never satisfy any rule, so waiting
+                        // for it only costs the timeout on every switch.
+                        if (!launchResult.LifecycleManageable)
+                            report($"Sherpa cannot track {app.Name}, so it did not wait for it.");
+                        else
+                        {
+                            report($"Waiting until {app.Name} {rule.Describe()}…");
+                            var readiness = await processes.WaitUntilReadyAsync(app, rule,
+                                TimeSpan.FromMilliseconds(document.Settings.LaunchReadinessTimeoutMs),
+                                cancellationToken);
+                            report(readiness.Message);
+                            if (!readiness.Ready) warnings.Add(readiness.Message);
+                        }
+                    }
                     if (launchResult.HasWarning ||
                         (app.StartMinimized && !launchResult.Minimized && !launchResult.MinimizationPending))
                         warnings.Add(launchResult.Message);

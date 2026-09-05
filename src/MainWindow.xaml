@@ -232,7 +232,7 @@
                     <Grid Margin="0,0,0,10">
                         <StackPanel>
                             <TextBlock Text="APPLICATIONS" FontSize="17" FontWeight="SemiBold"/>
-                            <TextBlock Text="Apps launch from top to bottom. Drag-free ordering keeps switches predictable."
+                            <TextBlock Text="Applications start in the order listed. Each one waits for the previous to start, so ordering the list is all that is needed."
                                        Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,4,0,0"/>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom">
@@ -245,7 +245,8 @@
                     </Grid>
 
                     <DataGrid x:Name="ApplicationsGrid" ItemsSource="{Binding Applications}" AutoGenerateColumns="False" CanUserAddRows="False"
-                              AlternationCount="2"
+                              AlternationCount="2" LoadingRow="ApplicationsGrid_LoadingRow"
+                              HeadersVisibility="All" RowHeaderWidth="30"
                               SelectionMode="Single" MinHeight="210" MaxHeight="350" RowEditEnding="ApplicationsGrid_RowEditEnding">
                         <DataGrid.Columns>
                             <DataGridCheckBoxColumn Header="Use" Binding="{Binding Enabled}" Width="48"
@@ -264,7 +265,7 @@
                                 </DataGridCheckBoxColumn.Header>
                             </DataGridCheckBoxColumn>
                             <DataGridTextColumn Header="Executable or URL" Binding="{Binding Path, UpdateSourceTrigger=PropertyChanged}" Width="*" MinWidth="210"/>
-                            <DataGridTextColumn Header="Delay ms" Binding="{Binding LaunchDelayMs}" Width="76">
+                            <DataGridTextColumn x:Name="DelayColumn" Header="Delay ms" Binding="{Binding LaunchDelayMs}" Width="76">
                                 <DataGridTextColumn.HeaderStyle>
                                     <Style TargetType="DataGridColumnHeader" BasedOn="{StaticResource {x:Type DataGridColumnHeader}}">
                                         <Setter Property="HorizontalContentAlignment" Value="Center"/>
@@ -355,6 +356,31 @@
                                         <TextBlock Grid.Column="2" Text="ms" VerticalAlignment="Center"
                                                    Foreground="{StaticResource MutedTextBrush}" Margin="8,0,0,0"/>
                                     </Grid>
+                                    <Grid Margin="0,14,0,0" HorizontalAlignment="Left">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="150"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="80"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Before starting the next app, wait for" VerticalAlignment="Center"
+                                                   Foreground="{StaticResource MutedTextBrush}" Margin="0,0,12,0"/>
+                                        <ComboBox x:Name="LaunchReadinessCombo" Grid.Column="1"
+                                                  DisplayMemberPath="Label" SelectedValuePath="Value"
+                                                  SelectionChanged="LaunchReadiness_SelectionChanged"
+                                                  ToolTip="Applications Sherpa cannot track, such as scripts and protocol URLs, are never waited for."/>
+                                        <TextBlock Grid.Column="2" Text="up to" VerticalAlignment="Center"
+                                                   Foreground="{StaticResource MutedTextBrush}" Margin="12,0,8,0"/>
+                                        <TextBox x:Name="LaunchReadinessTimeoutBox" Grid.Column="3" MaxLength="6"
+                                                 LostFocus="LaunchReadinessTimeout_LostFocus"/>
+                                        <TextBlock Grid.Column="4" Text="ms" VerticalAlignment="Center"
+                                                   Foreground="{StaticResource MutedTextBrush}" Margin="8,0,0,0"/>
+                                    </Grid>
+                                    <CheckBox x:Name="ShowLaunchDelaysCheckBox" Margin="0,10,0,0"
+                                              Content="Show the per-application launch delay column"
+                                              ToolTip="A fixed delay is only needed for scripts, protocol URLs, and other targets Sherpa cannot detect."
+                                              Checked="SettingsCheckBox_Changed" Unchecked="SettingsCheckBox_Changed"/>
                                     <CheckBox x:Name="StartWithWindowsCheckBox" Margin="0,10,0,0"
                                               Content="Start Sherpa Manager when Windows starts"
                                               Checked="SettingsCheckBox_Changed" Unchecked="SettingsCheckBox_Changed"/>

@@ -25,6 +25,23 @@ Quality-of-life release.
   after the display itself is usable. A device that is not connected, or a switch
   Windows refuses, is reported as a warning and never fails the profile switch.
   Output and input are independent: a profile may set either, both, or neither.
+- Launch order. Applications start in the order listed, now numbered in the
+  grid, and by default each one waits for the previous to start before it
+  begins. "Start this after that" is expressed by putting it lower in the list;
+  there is nothing else to configure. **Settings -> Before starting the next app,
+  wait for** raises that to the previous application's window appearing or
+  responding, or turns waiting off, with a timeout. Applications Sherpa cannot
+  track, such as scripts and protocol URLs, are never waited for, since no rule
+  could ever be satisfied for them. A wait that times out is a warning: later
+  applications still start.
+
+### Changed
+
+- The per-application launch delay is hidden by default and enabled from
+  **Settings -> Show the per-application launch delay column**. Order and
+  readiness cover almost everything; a fixed delay is only needed for scripts,
+  protocol URLs, and other targets Sherpa cannot detect. Existing delays keep
+  working whether or not the column is shown.
 - The application version is shown in the bottom right corner of the window, so
   a bug report can name the exact build without opening Settings.
 - **View layout** in the profile editor draws the monitors a profile will

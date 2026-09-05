@@ -77,8 +77,18 @@ internal static class Program
             ("A monitor audio endpoint is waited for after the display comes up", TestAudioEndpointAppearsLateAsync),
             ("Audio input switches independently of output", TestAudioInputAsync),
             ("The displayed version drops build metadata", TestAppVersionFormatAsync),
+            ("An application is waited for before the next one starts", TestReadinessGatesNextLaunchAsync),
+            ("Applications Sherpa cannot track are not waited for", TestReadinessSkipsUntrackableAsync),
+            ("Applications start in the order they are listed", TestLaunchOrderAsync),
+            ("A readiness timeout warns without failing the switch", TestReadinessTimeoutAsync),
+            ("Readiness detects a real fixture window", TestReadinessDetectsWindowAsync),
             ("Display layouts survive layouts that cannot be drawn", TestDisplayLayoutEdgeCasesAsync),
-            ("The display layout window renders every monitor", TestDisplayLayoutWindowRendersAsync)
+            ("The display layout window renders every monitor", TestDisplayLayoutWindowRendersAsync),
+            ("Application rows are numbered", TestApplicationRowNumbersRenderAsync),
+            ("Application rows are numbered when the profile arrives late", TestRowNumbersWithLateItemsAsync),
+            ("Row numbers survive the real profile binding chain", TestRowNumbersThroughProfileBindingAsync),
+            ("The row number column is present when a profile has no applications", TestRowHeaderOnEmptyGridAsync),
+            ("The row number column is present on the first profile selection", TestRowHeaderOnFirstSelectionAsync)
         };
 
         var selectedTests = tests.ToList();
@@ -1871,6 +1881,171 @@ internal static class Program
             "No wait should be reported when no display change could produce the device.");
     }
 
+    /// <summary>
+    /// Order is the mechanism now: "start after X" means "be below X in the list",
+    /// with a readiness rule on X deciding when that is.
+    /// </summary>
+    private static async Task TestLaunchOrderAsync()
+    {
+        var processes = new FakeProcessService();
+        var displays = new FakeDisplayConfigurationService(processes.Events);
+
+        var target = new SwitchProfile { Name = "iRacing" };
+        foreach (var name in new[] { "first", "second", "third" })
+            target.Applications.Add(new LaunchApplication { Name = name, Path = $@"C:\sim\{name}.exe" });
+        var document = new ProfileDocument { Profiles = { target }, Settings = { DisplaySettleDelayMs = 0 } };
+
+        Assert(await new ProfileActivationService(displays, processes).ActivateAsync(document, target, _ => { }),
+            "The switch should succeed.");
+
+        var launches = processes.Events.Where(item => item.StartsWith("launch:", StringComparison.Ordinal)).ToList();
+        Assert(launches.SequenceEqual([@"launch:C:\sim\first.exe", @"launch:C:\sim\second.exe", @"launch:C:\sim\third.exe"]),
+            $"Applications started out of order: {string.Join(", ", launches)}");
+
+        // Reordering the list reorders the launches, with no other setting changed.
+        var moved = target.Applications[2];
+        target.Applications.Move(2, 0);
+        var reordered = new FakeProcessService();
+        var reorderedDisplays = new FakeDisplayConfigurationService(reordered.Events);
+        var second = new ProfileDocument { Profiles = { target }, Settings = { DisplaySettleDelayMs = 0 } };
+        await new ProfileActivationService(reorderedDisplays, reordered).ActivateAsync(second, target, _ => { });
+
+        var afterMove = reordered.Events.Where(item => item.StartsWith("launch:", StringComparison.Ordinal)).ToList();
+        Assert(afterMove.FirstOrDefault() == "launch:" + moved.Path,
+            $"The moved application should start first; got {afterMove.FirstOrDefault()}.");
+        return;
+    }
+
+    private static async Task TestReadinessGatesNextLaunchAsync()
+    {
+        var processes = new FakeProcessService();
+        var displays = new FakeDisplayConfigurationService(processes.Events);
+
+        var launcher = new LaunchApplication { Name = "Launcher", Path = @"C:\sim\launcher.exe" };
+        var second = new LaunchApplication { Name = "Crew Chief", Path = @"C:\sim\crew.exe" };
+        var target = new SwitchProfile { Name = "iRacing", Applications = { launcher, second } };
+        var document = new ProfileDocument { Profiles = { target }, Settings = { DisplaySettleDelayMs = 0 } };
+
+        // Waiting is the default: ordering the list is the whole configuration.
+        Assert(document.Settings.LaunchReadiness == LaunchReadiness.ProcessRunning,
+            "New documents should wait for each application to start.");
+
+        Assert(await new ProfileActivationService(displays, processes).ActivateAsync(document, target, _ => { }),
+            "The switch should succeed.");
+
+        var order = processes.Events;
+        var launched = order.IndexOf(@"launch:C:\sim\launcher.exe");
+        var waited = order.IndexOf(@"ready:C:\sim\launcher.exe");
+        var next = order.IndexOf(@"launch:C:\sim\crew.exe");
+
+        Assert(waited > launched, "Readiness must be checked after the application is started.");
+        Assert(next > waited, "The next application must not start until the previous one is ready.");
+        Assert(processes.ReadinessWaits.Count == 2, "Every trackable application should be waited for.");
+
+        // Turning it off restores straight-through launching.
+        var off = new FakeProcessService();
+        var offDisplays = new FakeDisplayConfigurationService(off.Events);
+        document.Settings.LaunchReadiness = LaunchReadiness.None;
+        await new ProfileActivationService(offDisplays, off).ActivateAsync(document, target, _ => { });
+        Assert(off.ReadinessWaits.Count == 0, "Nothing should be waited for when the rule is off.");
+    }
+
+    /// <summary>
+    /// Scripts, protocol URLs, and launchers whose real process cannot be matched
+    /// can never satisfy a rule, so waiting for them only costs the timeout.
+    /// </summary>
+    private static async Task TestReadinessSkipsUntrackableAsync()
+    {
+        var processes = new FakeProcessService();
+        processes.UntrackablePaths.Add(@"C:\sim\launch.url");
+        var displays = new FakeDisplayConfigurationService(processes.Events);
+
+        var shortcut = new LaunchApplication { Name = "Steam shortcut", Path = @"C:\sim\launch.url" };
+        var tracked = new LaunchApplication { Name = "Crew Chief", Path = @"C:\sim\crew.exe" };
+        var target = new SwitchProfile { Name = "iRacing", Applications = { shortcut, tracked } };
+        var document = new ProfileDocument { Profiles = { target }, Settings = { DisplaySettleDelayMs = 0 } };
+
+        var reports = new List<string>();
+        Assert(await new ProfileActivationService(displays, processes).ActivateAsync(document, target, reports.Add),
+            "The switch should succeed.");
+
+        Assert(!processes.ReadinessWaits.Contains(shortcut.Id),
+            "An untrackable target must not be waited for.");
+        Assert(processes.ReadinessWaits.Contains(tracked.Id),
+            "A trackable application should still be waited for.");
+        Assert(reports.Any(message => message.Contains("cannot track", StringComparison.OrdinalIgnoreCase)),
+            $"The skip should be reported. Reports: {string.Join(" | ", reports)}");
+    }
+
+    private static async Task TestReadinessTimeoutAsync()
+    {
+        var processes = new FakeProcessService { ReadinessSucceeds = false };
+        var displays = new FakeDisplayConfigurationService(processes.Events);
+
+        var slow = new LaunchApplication { Name = "Slow app", Path = @"C:\sim\slow.exe" };
+        var second = new LaunchApplication { Name = "Crew Chief", Path = @"C:\sim\crew.exe" };
+        var target = new SwitchProfile { Name = "iRacing", Applications = { slow, second } };
+        var document = new ProfileDocument
+        {
+            Profiles = { target },
+            Settings = { DisplaySettleDelayMs = 0, LaunchReadiness = LaunchReadiness.WindowResponsive }
+        };
+
+        var reports = new List<string>();
+        // A slow application must not cost the rest of the profile.
+        Assert(await new ProfileActivationService(displays, processes).ActivateAsync(document, target, reports.Add),
+            "A readiness timeout must not fail the switch.");
+        Assert(processes.Launched.Count == 2, "Later applications must still start after a timeout.");
+        Assert(reports.Any(message => message.Contains("did not reach", StringComparison.OrdinalIgnoreCase)),
+            $"The timeout was not reported. Reports: {string.Join(" | ", reports)}");
+    }
+
+    /// <summary>
+    /// The window and process rules run against real Win32 state, so they are
+    /// checked against a real fixture rather than only through the fake.
+    /// </summary>
+    private static async Task TestReadinessDetectsWindowAsync()
+    {
+        using var directory = new TemporaryDirectory();
+        var fixtureDirectory = Path.Combine(directory.Path, "fixture");
+        CopyFixtureOutput(fixtureDirectory);
+        const string processName = "ReadyFixture";
+        var executable = Path.Combine(fixtureDirectory, processName + ".exe");
+        File.Move(Path.Combine(fixtureDirectory, "WindowFixture.exe"), executable);
+
+        var service = new ProcessService();
+        var app = new LaunchApplication
+        {
+            Name = "Ready fixture",
+            Path = executable,
+            ProcessName = processName,
+            StartMinimized = true
+        };
+
+        try
+        {
+            Assert((await service.LaunchAsync(app, CancellationToken.None)).Started, "Fixture did not start.");
+            var ready = await service.WaitUntilReadyAsync(app, LaunchReadiness.WindowVisible,
+                TimeSpan.FromSeconds(15), CancellationToken.None);
+            Assert(ready.Ready, $"A real window was not detected: {ready.Message}");
+
+            // A minimized window still counts: applications that start minimized
+            // would otherwise never satisfy the rule.
+            Assert((await service.WaitUntilReadyAsync(app, LaunchReadiness.WindowResponsive,
+                    TimeSpan.FromSeconds(15), CancellationToken.None)).Ready,
+                "A running fixture should be reported as responsive.");
+        }
+        finally { await service.CloseAsync(app, CancellationToken.None); }
+
+        // Nothing running: the rule must time out rather than report ready.
+        var absent = new LaunchApplication { Name = "Absent", Path = executable, ProcessName = processName };
+        var timedOut = await new ProcessService().WaitUntilReadyAsync(absent, LaunchReadiness.ProcessRunning,
+            TimeSpan.FromSeconds(1), CancellationToken.None);
+        Assert(!timedOut.Ready, "An application that is not running must not be reported ready.");
+        Assert(timedOut.Message.Contains("did not reach", StringComparison.OrdinalIgnoreCase),
+            $"Unexpected timeout message: {timedOut.Message}");
+    }
+
     private static Task TestAppVersionFormatAsync()
     {
         // The SDK appends the commit to the informational version; the window
@@ -2207,6 +2382,346 @@ internal static class Program
             new DisplaySnapshot { ActiveTargets = [Monitor("one", "Big", 3840, 2160)] }, 0, 0);
         Assert(tiny.HasTiles && !double.IsNaN(tiny.Width) && tiny.Width > 0,
             $"A zero-sized canvas should still produce a drawable tile; got width {tiny.Width}.");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The launch order is only useful if it is visible, and the application-wide
+    /// DataGrid style sets HeadersVisibility to Column, which hides row headers
+    /// however wide they are. This renders a grid under those same styles to
+    /// confirm a local override still draws the numbers.
+    /// </summary>
+    /// <summary>
+    /// Profiles load after the window is already open, so the grid receives its
+    /// items late. LoadingRow alone left the launch order blank until something
+    /// regenerated the rows, which is why the numbers only appeared after clicking
+    /// between profiles.
+    /// </summary>
+    /// <remarks>
+    /// This mirrors the wiring in MainWindow rather than calling it: constructing
+    /// the real window would start the tray icon, the profile store, and the
+    /// display and process services.
+    /// </remarks>
+    /// <summary>
+    /// Reproduces the applications grid as the window actually builds it: inside a
+    /// TabControl that presents only its selected content, with the DataContext
+    /// bound to the profile list's selection and the items bound to that profile's
+    /// Applications. The selection is made after the window is up, as it is when
+    /// profiles load.
+    /// </summary>
+    /// <summary>
+    /// A profile with no applications still has to show the launch order column,
+    /// otherwise the grid changes shape when a profile is selected and it looks
+    /// like the column only exists sometimes.
+    /// </summary>
+    /// <summary>
+    /// The startup sequence: the window opens with nothing selected, then the
+    /// profile list makes its first selection once profiles have loaded. The
+    /// launch order column must be there straight away, not only after the
+    /// selection changes a second time.
+    /// </summary>
+    private static Task TestRowHeaderOnFirstSelectionAsync()
+    {
+        var empty = new SwitchProfile { Name = "Work" };
+        var rendered = new List<string>();
+
+        OnUiThread(() =>
+        {
+            var profiles = new System.Windows.Controls.ListBox
+            {
+                ItemsSource = new[] { empty },
+                DisplayMemberPath = "Name"
+            };
+
+            var grid = new System.Windows.Controls.DataGrid
+            {
+                AutoGenerateColumns = false,
+                CanUserAddRows = false,
+                HeadersVisibility = System.Windows.Controls.DataGridHeadersVisibility.All,
+                RowHeaderWidth = 30,
+                AlternationCount = 2
+            };
+            grid.SetBinding(System.Windows.Controls.ItemsControl.ItemsSourceProperty,
+                new System.Windows.Data.Binding("Applications"));
+            grid.Columns.Add(new System.Windows.Controls.DataGridTextColumn
+            {
+                Header = "Name",
+                Binding = new System.Windows.Data.Binding("Name")
+            });
+
+            var page = new System.Windows.Controls.Grid();
+            page.SetBinding(System.Windows.FrameworkElement.DataContextProperty,
+                new System.Windows.Data.Binding("SelectedItem") { Source = profiles });
+            page.Children.Add(grid);
+
+            var tabs = new System.Windows.Controls.TabControl { SelectedIndex = 0 };
+            tabs.Items.Add(new System.Windows.Controls.TabItem { Content = page });
+
+            var window = new Window
+            {
+                Width = 700,
+                Height = 420,
+                Content = tabs,
+                ShowActivated = false,
+                Opacity = 0,
+                WindowStartupLocation = System.Windows.WindowStartupLocation.Manual,
+                Left = -32000,
+                Top = -32000
+            };
+            try
+            {
+                // Opens with nothing selected, exactly as the window does before
+                // profiles have loaded.
+                window.Show();
+                window.UpdateLayout();
+
+                profiles.SelectedItem = empty;
+                window.UpdateLayout();
+                CollectText(window, rendered);
+            }
+            finally { window.Close(); }
+        });
+
+        Assert(rendered.Contains("\u2116"),
+            $"The launch order column was missing on the first selection. Rendered: {string.Join(" | ", rendered)}");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestRowHeaderOnEmptyGridAsync()
+    {
+        var rendered = new List<string>();
+        OnUiThread(() =>
+        {
+            var grid = new System.Windows.Controls.DataGrid
+            {
+                AutoGenerateColumns = false,
+                CanUserAddRows = false,
+                HeadersVisibility = System.Windows.Controls.DataGridHeadersVisibility.All,
+                RowHeaderWidth = 30,
+                ItemsSource = Array.Empty<LaunchApplication>()
+            };
+            grid.Columns.Add(new System.Windows.Controls.DataGridTextColumn
+            {
+                Header = "Name",
+                Binding = new System.Windows.Data.Binding("Name")
+            });
+
+            var window = new Window
+            {
+                Width = 520,
+                Height = 300,
+                Content = grid,
+                ShowActivated = false,
+                Opacity = 0,
+                WindowStartupLocation = System.Windows.WindowStartupLocation.Manual,
+                Left = -32000,
+                Top = -32000
+            };
+            try
+            {
+                window.Show();
+                window.UpdateLayout();
+                CollectText(window, rendered);
+            }
+            finally { window.Close(); }
+        });
+
+        Assert(rendered.Contains("\u2116"),
+            $"The row number column disappeared on an empty grid. Rendered: {string.Join(" | ", rendered)}");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestRowNumbersThroughProfileBindingAsync()
+    {
+        var empty = new SwitchProfile { Name = "Work" };
+        var populated = new SwitchProfile { Name = "iRacing" };
+        foreach (var name in new[] { "FEEL_VR", "Crew Chief", "iRacing" })
+            populated.Applications.Add(new LaunchApplication { Name = name, Path = $@"C:\sim\{name}.exe" });
+
+        var rendered = new List<string>();
+        var startupRendered = new List<string>();
+
+        OnUiThread(() =>
+        {
+            var profiles = new System.Windows.Controls.ListBox
+            {
+                ItemsSource = new[] { empty, populated },
+                DisplayMemberPath = "Name"
+            };
+
+            var grid = new System.Windows.Controls.DataGrid
+            {
+                AutoGenerateColumns = false,
+                CanUserAddRows = false,
+                HeadersVisibility = System.Windows.Controls.DataGridHeadersVisibility.All,
+                RowHeaderWidth = 30,
+                AlternationCount = 2
+            };
+            grid.SetBinding(System.Windows.Controls.ItemsControl.ItemsSourceProperty,
+                new System.Windows.Data.Binding("Applications"));
+            grid.Columns.Add(new System.Windows.Controls.DataGridTextColumn
+            {
+                Header = "Name",
+                Binding = new System.Windows.Data.Binding("Name")
+            });
+            grid.LoadingRow += (_, e) => e.Row.Header = (e.Row.GetIndex() + 1).ToString();
+            grid.ItemContainerGenerator.StatusChanged += (_, _) =>
+            {
+                if (grid.ItemContainerGenerator.Status !=
+                    System.Windows.Controls.Primitives.GeneratorStatus.ContainersGenerated) return;
+                for (var index = 0; index < grid.Items.Count; index++)
+                    if (grid.ItemContainerGenerator.ContainerFromIndex(index) is System.Windows.Controls.DataGridRow row)
+                        row.Header = (index + 1).ToString();
+            };
+
+            // The grid's DataContext comes from the profile list's selection, and
+            // the whole page lives inside a TabControl.
+            var page = new System.Windows.Controls.Grid();
+            page.SetBinding(System.Windows.FrameworkElement.DataContextProperty,
+                new System.Windows.Data.Binding("SelectedItem") { Source = profiles });
+            page.Children.Add(grid);
+
+            var tabs = new System.Windows.Controls.TabControl { SelectedIndex = 0 };
+            tabs.Items.Add(new System.Windows.Controls.TabItem { Content = page });
+
+            var root = new System.Windows.Controls.DockPanel();
+            System.Windows.Controls.DockPanel.SetDock(profiles, System.Windows.Controls.Dock.Left);
+            profiles.Width = 140;
+            root.Children.Add(profiles);
+            root.Children.Add(tabs);
+
+            var window = new Window
+            {
+                Width = 700,
+                Height = 420,
+                Content = root,
+                ShowActivated = false,
+                Opacity = 0,
+                WindowStartupLocation = System.Windows.WindowStartupLocation.Manual,
+                Left = -32000,
+                Top = -32000
+            };
+            try
+            {
+                window.Show();
+                window.UpdateLayout();
+
+                // As MainWindow_Loaded does: select a profile once the window is up.
+                profiles.SelectedItem = populated;
+                window.UpdateLayout();
+                CollectText(window, startupRendered);
+
+                // Then switch away and back, which is what made the numbers appear.
+                profiles.SelectedItem = empty;
+                window.UpdateLayout();
+                profiles.SelectedItem = populated;
+                window.UpdateLayout();
+                CollectText(window, rendered);
+            }
+            finally { window.Close(); }
+        });
+
+        foreach (var number in new[] { "1", "2", "3" })
+            Assert(startupRendered.Contains(number),
+                $"Row number {number} was missing on the first selection. Rendered: {string.Join(" | ", startupRendered)}");
+        foreach (var number in new[] { "1", "2", "3" })
+            Assert(rendered.Contains(number),
+                $"Row number {number} was missing after switching profiles. Rendered: {string.Join(" | ", rendered)}");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestRowNumbersWithLateItemsAsync()
+    {
+        var rendered = new List<string>();
+        OnUiThread(() =>
+        {
+            var grid = new System.Windows.Controls.DataGrid
+            {
+                AutoGenerateColumns = false,
+                CanUserAddRows = false,
+                HeadersVisibility = System.Windows.Controls.DataGridHeadersVisibility.All,
+                RowHeaderWidth = 30
+            };
+            grid.Columns.Add(new System.Windows.Controls.DataGridTextColumn
+            {
+                Header = "Value",
+                Binding = new System.Windows.Data.Binding(".")
+            });
+            grid.LoadingRow += (_, e) => e.Row.Header = (e.Row.GetIndex() + 1).ToString();
+            grid.ItemContainerGenerator.StatusChanged += (_, _) =>
+            {
+                if (grid.ItemContainerGenerator.Status !=
+                    System.Windows.Controls.Primitives.GeneratorStatus.ContainersGenerated) return;
+                for (var index = 0; index < grid.Items.Count; index++)
+                    if (grid.ItemContainerGenerator.ContainerFromIndex(index) is System.Windows.Controls.DataGridRow row)
+                        row.Header = (index + 1).ToString();
+            };
+
+            var window = new Window
+            {
+                Width = 420,
+                Height = 320,
+                Content = grid,
+                ShowActivated = false,
+                Opacity = 0,
+                WindowStartupLocation = System.Windows.WindowStartupLocation.Manual,
+                Left = -32000,
+                Top = -32000
+            };
+            try
+            {
+                window.Show();
+                window.UpdateLayout();
+
+                // The profile, and therefore the applications, arrive now.
+                grid.ItemsSource = new[] { "first", "second", "third" };
+                window.UpdateLayout();
+
+                CollectText(window, rendered);
+            }
+            finally { window.Close(); }
+        });
+
+        foreach (var number in new[] { "1", "2", "3" })
+            Assert(rendered.Contains(number),
+                $"Row number {number} was missing when items arrived after the window opened. Rendered: {string.Join(" | ", rendered)}");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestApplicationRowNumbersRenderAsync()
+    {
+        var bindingErrors = new List<string>();
+        var rendered = RenderOffScreen(() =>
+        {
+            var grid = new System.Windows.Controls.DataGrid
+            {
+                AutoGenerateColumns = false,
+                CanUserAddRows = false,
+                HeadersVisibility = System.Windows.Controls.DataGridHeadersVisibility.All,
+                RowHeaderWidth = 34,
+                ItemsSource = new[] { "first", "second", "third" }
+            };
+            grid.Columns.Add(new System.Windows.Controls.DataGridTextColumn
+            {
+                Header = "Value",
+                Binding = new System.Windows.Data.Binding(".")
+            });
+            grid.LoadingRow += (_, e) => e.Row.Header = (e.Row.GetIndex() + 1).ToString();
+
+            return new Window { Width = 420, Height = 320, Content = grid };
+        }, bindingErrors);
+
+        Assert(bindingErrors.Count == 0,
+            $"The grid reported data binding errors: {string.Join(" | ", bindingErrors)}");
+        foreach (var number in new[] { "1", "2", "3" })
+            Assert(rendered.Contains(number),
+                $"Row number {number} was not drawn. Rendered: {string.Join(" | ", rendered)}");
+
+        // The corner between the row and column headers labels the column. It is a
+        // button inside the DataGrid template and stays the Windows default white
+        // square unless its component resource is replaced, so confirm ours drew.
+        Assert(rendered.Contains("№"),
+            $"The row number column header was not drawn. Rendered: {string.Join(" | ", rendered)}");
         return Task.CompletedTask;
     }
 
@@ -2686,6 +3201,8 @@ internal static class Program
         public void CancelPendingClose(LaunchApplication app) { }
         public bool IsPendingCloseOutcomeCurrent(PendingProcessCloseOutcome outcome) => true;
         public bool IsRunning(LaunchApplication app) => RunningPaths.Contains(app.Path);
+        public HashSet<string> UntrackablePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
+
         public Task<ProcessLaunchResult> LaunchAsync(LaunchApplication app, CancellationToken cancellationToken)
         {
             if (app.Path.Equals(ThrowOnLaunchPath, StringComparison.OrdinalIgnoreCase))
@@ -2693,9 +3210,21 @@ internal static class Program
             Events.Add("launch:" + app.Path);
             Launched.Add(app.Id);
             RunningPaths.Add(app.Path);
-            return Task.FromResult(new ProcessLaunchResult(true, app.StartMinimized, "started"));
+            return Task.FromResult(new ProcessLaunchResult(true, app.StartMinimized, "started",
+                LifecycleManageable: !UntrackablePaths.Contains(app.Path)));
         }
         public Task<bool> MinimizeAsync(LaunchApplication app, TimeSpan timeout, CancellationToken cancellationToken) => Task.FromResult(true);
+        public List<Guid> ReadinessWaits { get; } = [];
+        public bool ReadinessSucceeds { get; set; } = true;
+        public Task<ProcessReadinessResult> WaitUntilReadyAsync(LaunchApplication app, LaunchReadiness readiness,
+            TimeSpan timeout, CancellationToken cancellationToken)
+        {
+            ReadinessWaits.Add(app.Id);
+            Events.Add("ready:" + app.Path);
+            return Task.FromResult(ReadinessSucceeds
+                ? new ProcessReadinessResult(true, $"{app.Name} is ready.")
+                : new ProcessReadinessResult(false, $"{app.Name} did not reach '{readiness.Describe()}' in time; the profile continued anyway."));
+        }
         public Task<ProcessCloseResult> CloseAsync(LaunchApplication app, CancellationToken cancellationToken)
         {
             Events.Add("close:" + app.Path);

@@ -57,6 +57,13 @@ public partial class MainWindow : Window
         _displays = new DisplayConfigurationService(diagnostics: _diagnostics);
         _processes = new ProcessService(diagnostics: _diagnostics);
         InitializeComponent();
+        LaunchReadinessCombo.ItemsSource = new[]
+        {
+            new ReadinessOption(LaunchReadiness.None, "Nothing"),
+            new ReadinessOption(LaunchReadiness.ProcessRunning, "It to start"),
+            new ReadinessOption(LaunchReadiness.WindowVisible, "Its window"),
+            new ReadinessOption(LaunchReadiness.WindowResponsive, "It to respond")
+        };
         SurroundModeCombo.ItemsSource = new[]
         {
             new SurroundModeOption(NvidiaSurroundMode.Ignore, "Do not manage"),
@@ -76,6 +83,11 @@ public partial class MainWindow : Window
         _processes.PendingCloseCompleted += ProcessService_PendingCloseCompleted;
         _processes.PendingMinimizationCompleted += ProcessService_PendingMinimizationCompleted;
         VersionText.Text = AppVersion.Display;
+        // LoadingRow alone is not enough: on the first open, and whenever the
+        // selected profile changes the grid's source, rows can be prepared before
+        // they have a usable index, leaving the launch order blank until something
+        // regenerates them. This fires whenever containers actually exist.
+        ApplicationsGrid.ItemContainerGenerator.StatusChanged += ApplicationRows_StatusChanged;
         _applicationIcon = TryLoadApplicationIcon();
         _trayIcon = new Forms.NotifyIcon
         {
@@ -129,6 +141,10 @@ public partial class MainWindow : Window
         // entry from Task Manager without Sherpa ever knowing.
         _document.Settings.StartWithWindows = _startup.IsRegistered;
         StartWithWindowsCheckBox.IsChecked = _document.Settings.StartWithWindows;
+        ShowLaunchDelaysCheckBox.IsChecked = _document.Settings.ShowLaunchDelays;
+        LaunchReadinessCombo.SelectedValue = _document.Settings.LaunchReadiness;
+        LaunchReadinessTimeoutBox.Text = _document.Settings.LaunchReadinessTimeoutMs.ToString();
+        ApplyLaunchDelayVisibility();
         DisplaySettleDelayBox.Text = _document.Settings.DisplaySettleDelayMs.ToString();
         RebuildStartupProfileCombo();
         _loadingSettings = false;
@@ -443,6 +459,34 @@ public partial class MainWindow : Window
         StartupProfileCombo.ItemsSource = options;
         StartupProfileCombo.SelectedValue = _document.Settings.ActivateProfileOnStartup;
         if (StartupProfileCombo.SelectedItem is null) StartupProfileCombo.SelectedIndex = 0;
+    }
+
+    private async void LaunchReadiness_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingSettings || !IsLoaded || !_profilesLoaded) return;
+        if (LaunchReadinessCombo.SelectedValue is not LaunchReadiness readiness) return;
+
+        _document.Settings.LaunchReadiness = readiness;
+        StatusText.Text = readiness == LaunchReadiness.None
+            ? "Applications will start one after another without waiting."
+            : $"Each application will start once the previous one's {readiness.Describe()}.";
+        await SaveAsync();
+    }
+
+    private async void LaunchReadinessTimeout_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (_loadingSettings || !IsLoaded || !_profilesLoaded) return;
+
+        if (!int.TryParse(LaunchReadinessTimeoutBox.Text.Trim(), out var requested) || requested < 0)
+        {
+            StatusText.Text = "The wait must be a whole number of milliseconds.";
+            LaunchReadinessTimeoutBox.Text = _document.Settings.LaunchReadinessTimeoutMs.ToString();
+            return;
+        }
+
+        _document.Settings.LaunchReadinessTimeoutMs = requested;
+        LaunchReadinessTimeoutBox.Text = _document.Settings.LaunchReadinessTimeoutMs.ToString();
+        await SaveAsync();
     }
 
     private async void DisplaySettleDelay_LostFocus(object sender, RoutedEventArgs e)
@@ -869,8 +913,37 @@ public partial class MainWindow : Window
         if (newIndex < 0 || newIndex >= profile.Applications.Count) return;
         profile.Applications.Move(oldIndex, newIndex);
         ApplicationsGrid.SelectedItem = app;
+        RenumberApplicationRows();
         await SaveAsync();
     }
+
+    /// <summary>
+    /// Numbers the rows so the launch order is visible rather than implied by
+    /// position alone.
+    /// </summary>
+    private void ApplicationsGrid_LoadingRow(object sender, DataGridRowEventArgs e) =>
+        e.Row.Header = (e.Row.GetIndex() + 1).ToString();
+
+    private void ApplicationRows_StatusChanged(object? sender, EventArgs e)
+    {
+        if (ApplicationsGrid.ItemContainerGenerator.Status ==
+            System.Windows.Controls.Primitives.GeneratorStatus.ContainersGenerated)
+            RenumberApplicationRows();
+    }
+
+    /// <summary>
+    /// Rows keep their old numbers after a move, because only the moved container
+    /// is regenerated. Renumber the ones currently realized.
+    /// </summary>
+    private void RenumberApplicationRows()
+    {
+        for (var index = 0; index < ApplicationsGrid.Items.Count; index++)
+            if (ApplicationsGrid.ItemContainerGenerator.ContainerFromIndex(index) is DataGridRow row)
+                row.Header = (index + 1).ToString();
+    }
+
+    private void ApplyLaunchDelayVisibility() =>
+        DelayColumn.Visibility = _document.Settings.ShowLaunchDelays ? Visibility.Visible : Visibility.Collapsed;
 
     private async void BrowseApplication_Click(object sender, RoutedEventArgs e)
     {
@@ -972,6 +1045,8 @@ public partial class MainWindow : Window
         _document.Settings.MinimizeToTrayOnClose = CloseToTrayCheckBox.IsChecked == true;
         _document.Settings.ConfirmDisplayChanges = ConfirmDisplayChangesCheckBox.IsChecked == true;
         _document.Settings.ShowActivationPreview = ShowActivationPreviewCheckBox.IsChecked == true;
+        _document.Settings.ShowLaunchDelays = ShowLaunchDelaysCheckBox.IsChecked == true;
+        ApplyLaunchDelayVisibility();
 
         var wantsStartup = StartWithWindowsCheckBox.IsChecked == true;
         if (wantsStartup != _startup.IsRegistered && !_startup.SetRegistered(wantsStartup))
@@ -1283,6 +1358,7 @@ public partial class MainWindow : Window
         _observedProfiles.Clear();
         _processes.PendingCloseCompleted -= ProcessService_PendingCloseCompleted;
         _processes.PendingMinimizationCompleted -= ProcessService_PendingMinimizationCompleted;
+        ApplicationsGrid.ItemContainerGenerator.StatusChanged -= ApplicationRows_StatusChanged;
         _hotkeys.HotkeyPressed -= Hotkeys_HotkeyPressed;
         _hotkeys.Dispose();
         _displays.Dispose();
@@ -1449,6 +1525,8 @@ public partial class MainWindow : Window
     }
 
     private sealed record SurroundModeOption(NvidiaSurroundMode Value, string Label);
+
+    private sealed record ReadinessOption(LaunchReadiness Value, string Label);
 
     private sealed record StartupProfileOption(Guid? Value, string Label);
 

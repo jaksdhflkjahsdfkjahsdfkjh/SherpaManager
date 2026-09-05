@@ -391,6 +391,65 @@
             <Setter Property="SeparatorBrush" Value="#4A4856"/>
             <Setter Property="SeparatorVisibility" Value="Visible"/>
         </Style>
+        <!-- Row headers carry the launch order number. Retemplated because the
+             default header draws its own chrome and a current-row indicator, which
+             pushes the number off centre in a narrow column. -->
+        <Style TargetType="DataGridRowHeader">
+            <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}"/>
+            <Setter Property="FontSize" Value="11"/>
+            <!-- A floor, so the column cannot collapse if the grid measures before
+                 it has content to derive a width from. -->
+            <Setter Property="MinWidth" Value="30"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="DataGridRowHeader">
+                        <Border Background="{StaticResource Surface2Brush}"
+                                BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="0,0,1,0"
+                                SnapsToDevicePixels="True">
+                            <TextBlock Text="{Binding RelativeSource={RelativeSource TemplatedParent}, Path=Content}"
+                                       Foreground="{TemplateBinding Foreground}"
+                                       FontSize="{TemplateBinding FontSize}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       TextAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=DataGridRow}}"
+                                         Value="True">
+                                <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+                            </DataTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- The top-left corner between the row and column headers. It is a button
+             in the DataGrid template and keeps the Windows default look, which is a
+             white square, unless its component resource is replaced. -->
+        <Style x:Key="{ComponentResourceKey ResourceId=DataGridSelectAllButtonStyle, TypeInTargetAssembly={x:Type DataGrid}}"
+               TargetType="Button">
+            <Setter Property="Focusable" Value="False"/>
+            <!-- The DataGrid template binds this button's Width to
+                 CellsPanelHorizontalOffset, which is derived from measured rows and
+                 is zero before the first useful layout pass. MinWidth is not part of
+                 that binding, so it holds the column open regardless of timing. -->
+            <Setter Property="MinWidth" Value="30"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{StaticResource Surface2Brush}"
+                                BorderBrush="#4A4856" BorderThickness="0,0,2,1"
+                                SnapsToDevicePixels="True">
+                            <TextBlock Text="№" Foreground="{StaticResource MutedTextBrush}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       ToolTip="Launch order"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style TargetType="DataGridCell">
             <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
             <Setter Property="Background" Value="Transparent"/>

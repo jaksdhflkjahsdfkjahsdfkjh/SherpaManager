@@ -174,6 +174,94 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null, IDiagn
             MinimizationPending: true));
     }
 
+    /// <summary>
+    /// Waits until the application meets its readiness rule, so the next
+    /// application in the profile does not start into a machine that is still
+    /// busy opening this one.
+    /// </summary>
+    public async Task<ProcessReadinessResult> WaitUntilReadyAsync(LaunchApplication app,
+        LaunchReadiness readiness, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        if (readiness == LaunchReadiness.None)
+            return new ProcessReadinessResult(true, $"{app.Name} was not waited for.");
+
+        var target = Resolve(app);
+        if (timeout < TimeSpan.FromSeconds(1)) timeout = TimeSpan.FromSeconds(1);
+        var deadline = DateTime.UtcNow + timeout;
+
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (IsReady(app, target, readiness))
+            {
+                _diagnostics.Write("info", "process.ready", data: new Dictionary<string, object?>
+                {
+                    ["applicationId"] = app.Id,
+                    ["readiness"] = readiness.ToString()
+                });
+                return new ProcessReadinessResult(true, $"{app.Name} is ready.");
+            }
+
+            if (DateTime.UtcNow >= deadline)
+            {
+                _diagnostics.Write("warning", "process.ready.timeout", data: new Dictionary<string, object?>
+                {
+                    ["applicationId"] = app.Id,
+                    ["readiness"] = readiness.ToString(),
+                    ["timeoutMs"] = (int)timeout.TotalMilliseconds
+                });
+                return new ProcessReadinessResult(false,
+                    $"{app.Name} did not reach '{readiness.Describe()}' within {timeout.TotalSeconds:0.#}s; the profile continued anyway.");
+            }
+
+            await Task.Delay(250, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private bool IsReady(LaunchApplication app, ResolvedLaunchTarget target, LaunchReadiness readiness)
+    {
+        var processes = GetMatchingProcesses(app, target);
+        try
+        {
+            var alive = processes.Where(IsAlive).ToList();
+            if (alive.Count == 0) return false;
+            if (readiness == LaunchReadiness.ProcessRunning) return true;
+
+            var processIds = alive.Select(process => (uint)process.Id).ToHashSet();
+            if (!HasVisibleWindow(processIds)) return false;
+            if (readiness == LaunchReadiness.WindowVisible) return true;
+
+            // Responding is false while a window exists but is not pumping
+            // messages, which is exactly the "still loading" state a fixed delay
+            // is trying to guess at.
+            return alive.Any(process =>
+            {
+                try { return process.Responding; }
+                catch { return false; }
+            });
+        }
+        finally { DisposeAll(processes); }
+    }
+
+    /// <summary>
+    /// True when any matching process owns a visible top-level window. A window
+    /// counts while minimized: applications set to start minimized have one, and
+    /// requiring it to be on screen would never be satisfied for them.
+    /// </summary>
+    private static bool HasVisibleWindow(HashSet<uint> processIds)
+    {
+        var found = false;
+        EnumWindows((window, _) =>
+        {
+            GetWindowThreadProcessId(window, out var processId);
+            if (!processIds.Contains(processId) || !IsWindowVisible(window)) return true;
+            found = true;
+            return false;
+        }, IntPtr.Zero);
+        return found;
+    }
+
     public async Task<bool> MinimizeAsync(LaunchApplication app, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var target = Resolve(app);

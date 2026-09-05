@@ -24,7 +24,7 @@ public sealed class ActivationPreflightService(IDisplayConfigurationService disp
 
         preflight.Sections.Add(BuildAudioSection(target, target.Display is not null));
 
-        var startSection = BuildStartSection(target, out var targetIdentities);
+        var startSection = BuildStartSection(document, target, out var targetIdentities);
         var previous = document.Profiles.FirstOrDefault(profile => profile.Id == document.ActiveProfileId);
         preflight.Sections.Add(BuildCurrentApplicationsSection(previous, target, targetIdentities));
         preflight.Sections.Add(startSection);
@@ -234,7 +234,8 @@ public sealed class ActivationPreflightService(IDisplayConfigurationService disp
         return section;
     }
 
-    private PreflightSection BuildStartSection(SwitchProfile target, out HashSet<string> targetIdentities)
+    private PreflightSection BuildStartSection(ProfileDocument document, SwitchProfile target,
+        out HashSet<string> targetIdentities)
     {
         var section = new PreflightSection($"Applications in {target.Name}");
         targetIdentities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -290,16 +291,30 @@ public sealed class ActivationPreflightService(IDisplayConfigurationService disp
                 continue;
             }
 
-            var detail = app.LaunchDelayMs > 0
-                ? $"After a {app.LaunchDelayMs} ms delay{(app.StartMinimized ? ", minimized" : string.Empty)}."
-                : app.StartMinimized ? "Minimized." : null;
+            var notes = new List<string>();
+            if (app.LaunchDelayMs > 0) notes.Add($"after a {app.LaunchDelayMs} ms delay");
+            if (app.StartMinimized) notes.Add("minimized");
+
+            var detail = notes.Count == 0
+                ? null
+                : char.ToUpperInvariant(notes[0][0]) + string.Join(", ", notes)[1..] + ".";
             section.Items.Add(new PreflightItem(PreflightSeverity.Info, $"Start {app.Name}.", detail));
         }
 
         if (section.Items.Count == 0)
+        {
             section.Items.Add(new PreflightItem(PreflightSeverity.Info,
                 "This profile has no enabled applications.",
                 "Activation will only change displays."));
+            return section;
+        }
+
+        var rule = document.Settings.LaunchReadiness;
+        section.Items.Add(rule == LaunchReadiness.None
+            ? new PreflightItem(PreflightSeverity.Info, "Applications start one after another without waiting.")
+            : new PreflightItem(PreflightSeverity.Info,
+                $"Each application is started only once the previous one's {rule.Describe()}.",
+                $"Up to {document.Settings.LaunchReadinessTimeoutMs / 1000.0:0.#}s each. Applications Sherpa cannot track are not waited for."));
 
         return section;
     }

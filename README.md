@@ -134,6 +134,27 @@ If the device never appears, Sherpa leaves the output alone and reports a warnin
 
 Windows offers no supported way to change the default audio device. Sherpa uses the same undocumented interface every tool for this uses, which has been stable since Windows Vista but is not guaranteed; failures are reported rather than hidden.
 
+## Launch order and readiness
+
+Applications start in the order they are listed, and the grid numbers them so that order is visible. Each one waits for the previous to start before it begins, so putting an application lower in the list is all that "start it after that one" requires. Use the arrow buttons to reorder.
+
+**Settings → Before starting the next app, wait for** controls how much waiting happens:
+
+| Setting | Sherpa continues when |
+| --- | --- |
+| Nothing | Immediately after launching |
+| It to start | A matching process exists (default) |
+| Its window | That process owns a visible window |
+| It to respond | That window is also answering messages |
+
+The **up to** value caps each wait. Raise the setting when an application needs to be genuinely usable before the next starts — a launcher that takes a while to open its real window, for example. A window counts while minimized, so applications set to start minimized still satisfy the rule.
+
+Applications Sherpa cannot track — scripts, protocol URLs, and launchers whose real process it cannot match — are never waited for, because no rule could ever be satisfied for them. Use the delay column for those.
+
+A fixed per-application delay is still available for targets Sherpa cannot detect, such as scripts and protocol URLs, where no readiness rule can ever be satisfied. Turn on **Show the per-application launch delay column** in Settings to use it.
+
+If an application never becomes ready, Sherpa reports a warning and carries on with the rest of the profile rather than stopping the switch.
+
 ## Window and tray behavior
 
 - Starting Sherpa again restores and activates the existing instance.
