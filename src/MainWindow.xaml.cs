@@ -47,6 +47,8 @@ public partial class MainWindow : Window
     private SwitchProfile? _profileBeforeSettings;
     private bool _startupActivationHandled;
     private bool _capturingHotkey;
+    private readonly List<ActivationRecord> _activationHistory = [];
+    private ActivationRecord? _lastActivation;
 
     /// <summary>Profile name requested on the command line, applied once profiles have loaded.</summary>
     public string? PendingActivationRequest { get; set; }
@@ -75,6 +77,7 @@ public partial class MainWindow : Window
         // compiles cleanly and silently disables audio switching.
         _audio = new AudioDeviceService(_diagnostics);
         _activator = new ProfileActivationService(_displays, _processes, _diagnostics, _audio);
+        _activator.ActivationRecorded += Activator_ActivationRecorded;
         _preflight = new ActivationPreflightService(_displays, _processes, _audio);
         _hotkeys = new GlobalHotkeyService(_diagnostics);
         _startup = new StartupRegistrationService(_diagnostics);
@@ -639,11 +642,12 @@ public partial class MainWindow : Window
                 RebuildTrayMenu();
             }
             await SaveAsync();
+            ReportActivationOutcome(profile, activated);
         }
         catch (OperationCanceledException)
         {
             EnsureWindowIsVisible();
-            StatusText.Text = "Profile switch cancelled; the previous state was restored.";
+            SetStatus("Profile switch cancelled; the previous state was restored.", StatusSeverity.Warning);
             await SaveAsync();
         }
         catch (Exception ex) { ShowError($"Could not activate {profile.Name}", ex); }
@@ -652,6 +656,27 @@ public partial class MainWindow : Window
             _inFlightTargetIdentities.Clear();
             EndBusyOperation();
         }
+    }
+
+    /// <summary>
+    /// Replaces the last progress message with the result, since the running
+    /// commentary is only useful while the switch is happening.
+    /// </summary>
+    private void ReportActivationOutcome(SwitchProfile profile, bool activated)
+    {
+        var record = _lastActivation;
+        if (record is null || record.ProfileId != profile.Id) return;
+
+        if (!activated)
+        {
+            SetStatus($"{profile.Name} was not activated: {record.DescribeOutcome()}.", StatusSeverity.Error);
+            return;
+        }
+
+        SetStatus(record.Warnings.Count == 0
+                ? $"{profile.Name} is active."
+                : $"{profile.Name} is active with {record.Warnings.Count} warning{(record.Warnings.Count == 1 ? string.Empty : "s")} — see Recent switches.",
+            record.Warnings.Count == 0 ? StatusSeverity.Normal : StatusSeverity.Warning);
     }
 
     private async void CaptureDisplay_Click(object sender, RoutedEventArgs e)
@@ -793,8 +818,12 @@ public partial class MainWindow : Window
         try
         {
             var result = outcome.Result;
-            StatusText.Text = result.Message;
-            if (!result.Succeeded) ShowTrayWarning("Application still running", result.Message);
+            // These arrive seconds after the switch has finished. Only report the
+            // ones that are news: a success here would replace the switch outcome
+            // with a detail about one application.
+            if (result.Succeeded) return Task.CompletedTask;
+            SetStatus(result.Message, StatusSeverity.Warning);
+            ShowTrayWarning("Application still running", result.Message);
         }
         catch (Exception exception)
         {
@@ -809,8 +838,12 @@ public partial class MainWindow : Window
         Dispatcher.BeginInvoke(() =>
         {
             if (!_acceptActivation || !IsIdentityDesired(outcome.IdentityKey)) return;
-            StatusText.Text = outcome.Message;
-            if (!outcome.Minimized) ShowTrayWarning("Application was not minimized", outcome.Message);
+            // A window that finished minimized is exactly what was asked for, and
+            // arrives long after the switch reported its outcome. Only a failure is
+            // worth taking over the status bar.
+            if (outcome.Minimized) return;
+            SetStatus(outcome.Message, StatusSeverity.Warning);
+            ShowTrayWarning("Application was not minimized", outcome.Message);
         });
     }
 
@@ -1359,6 +1392,7 @@ public partial class MainWindow : Window
         _processes.PendingCloseCompleted -= ProcessService_PendingCloseCompleted;
         _processes.PendingMinimizationCompleted -= ProcessService_PendingMinimizationCompleted;
         ApplicationsGrid.ItemContainerGenerator.StatusChanged -= ApplicationRows_StatusChanged;
+        _activator.ActivationRecorded -= Activator_ActivationRecorded;
         _hotkeys.HotkeyPressed -= Hotkeys_HotkeyPressed;
         _hotkeys.Dispose();
         _displays.Dispose();
@@ -1400,6 +1434,52 @@ public partial class MainWindow : Window
         Directory.CreateDirectory(Path.GetDirectoryName(_store.FilePath)!);
         Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{_store.FilePath}\"") { UseShellExecute = true });
     }
+
+    /// <summary>
+    /// Keeps the recent switches for the history window. Bounded, and in memory
+    /// only: this is for understanding the session you are in, while the rotating
+    /// diagnostic log remains the record that survives a restart.
+    /// </summary>
+    private void Activator_ActivationRecorded(ActivationRecord record)
+    {
+        if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
+        _lastActivation = record;
+
+        // The switch is awaited from this thread, so recording it here keeps the
+        // history in step with the status message rather than a frame behind it.
+        if (Dispatcher.CheckAccess()) AddToActivationHistory(record);
+        else Dispatcher.BeginInvoke(() => AddToActivationHistory(record));
+    }
+
+    private void AddToActivationHistory(ActivationRecord record)
+    {
+        _activationHistory.Insert(0, record);
+        while (_activationHistory.Count > 20) _activationHistory.RemoveAt(_activationHistory.Count - 1);
+    }
+
+    /// <summary>
+    /// Writes the status bar with an emphasis matching the outcome, so a switch
+    /// that half worked does not read like one that worked.
+    /// </summary>
+    private void SetStatus(string message, StatusSeverity severity = StatusSeverity.Normal)
+    {
+        StatusText.Text = message;
+        StatusText.Foreground = severity switch
+        {
+            StatusSeverity.Warning => Brush("CautionBrush"),
+            StatusSeverity.Error => Brush("ProblemBrush"),
+            _ => Brush("MutedTextBrush")
+        };
+    }
+
+    private static System.Windows.Media.Brush Brush(string key) =>
+        System.Windows.Application.Current?.TryFindResource(key) as System.Windows.Media.Brush
+        ?? System.Windows.Media.Brushes.Gray;
+
+    private enum StatusSeverity { Normal, Warning, Error }
+
+    private void ShowActivationHistory_Click(object sender, RoutedEventArgs e) =>
+        new ActivationHistoryWindow(_activationHistory.ToList()) { Owner = this }.ShowDialog();
 
     private void ViewDisplayLayout_Click(object sender, RoutedEventArgs e)
     {
@@ -1479,7 +1559,7 @@ public partial class MainWindow : Window
 
     private void ReportBusyStatus(string message)
     {
-        StatusText.Text = message;
+        SetStatus(message);
         BusyOperationText.Text = message;
     }
 
@@ -1498,7 +1578,7 @@ public partial class MainWindow : Window
     private void ShowError(string title, Exception exception)
     {
         _diagnostics.Error("ui.error", exception, new Dictionary<string, object?> { ["title"] = title });
-        StatusText.Text = exception.Message;
+        SetStatus($"{title}: {exception.Message}", StatusSeverity.Error);
         System.Windows.MessageBox.Show(this, exception.Message, title, MessageBoxButton.OK, MessageBoxImage.Error);
     }
 

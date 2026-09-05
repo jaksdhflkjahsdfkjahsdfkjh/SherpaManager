@@ -88,7 +88,11 @@ internal static class Program
             ("Application rows are numbered when the profile arrives late", TestRowNumbersWithLateItemsAsync),
             ("Row numbers survive the real profile binding chain", TestRowNumbersThroughProfileBindingAsync),
             ("The row number column is present when a profile has no applications", TestRowHeaderOnEmptyGridAsync),
-            ("The row number column is present on the first profile selection", TestRowHeaderOnFirstSelectionAsync)
+            ("The row number column is present on the first profile selection", TestRowHeaderOnFirstSelectionAsync),
+            ("A switch is recorded exactly as it was reported", TestActivationRecordedAsync),
+            ("A cancelled switch is still recorded", TestCancelledActivationRecordedAsync),
+            ("The switch history window renders a recorded switch", TestActivationHistoryWindowRendersAsync),
+            ("Switches are numbered and labelled in the history", TestActivationHistoryLabellingAsync)
         };
 
         var selectedTests = tests.ToList();
@@ -2420,6 +2424,176 @@ internal static class Program
     /// launch order column must be there straight away, not only after the
     /// selection changes a second time.
     /// </summary>
+    private static async Task TestActivationRecordedAsync()
+    {
+        var processes = new FakeProcessService();
+        var displays = new FakeDisplayConfigurationService(processes.Events);
+        var audio = new FakeAudioDeviceService(processes.Events)
+        {
+            Devices = { new AudioDevice("speakers", "Desk speakers") },
+            DefaultId = "speakers"
+        };
+
+        var target = new SwitchProfile { Name = "iRacing", Display = new DisplaySnapshot() };
+        target.Applications.Add(new LaunchApplication { Name = "Sim", Path = @"C:\sim\app.exe" });
+        // A device that is not connected produces a warning without failing.
+        target.AudioOutputDeviceId = "absent";
+        target.AudioOutputDeviceName = "Headset";
+        var document = new ProfileDocument { Profiles = { target }, Settings = { DisplaySettleDelayMs = 0 } };
+
+        var activator = new ProfileActivationService(displays, processes, null, audio);
+        ActivationRecord? recorded = null;
+        activator.ActivationRecorded += record => recorded = record;
+
+        var seen = new List<string>();
+        Assert(await activator.ActivateAsync(document, target, seen.Add), "The switch should succeed.");
+
+        Assert(recorded is not null, "The switch was not recorded.");
+        Assert(recorded!.ProfileName == "iRacing", $"Recorded the wrong profile: {recorded.ProfileName}.");
+        Assert(recorded.Outcome == "succeeded_with_warnings", $"Unexpected outcome '{recorded.Outcome}'.");
+        Assert(recorded.DurationMs >= 0, "The switch should have a duration.");
+
+        // The history must be the messages the user actually saw, in order, or it
+        // is a second description that can drift away from the truth.
+        Assert(recorded.Steps.Select(step => step.Message).SequenceEqual(seen),
+            "The recorded steps do not match what was reported to the user.");
+
+        Assert(recorded.Warnings.Count == 1, $"Expected one warning, got {recorded.Warnings.Count}.");
+        Assert(recorded.Steps.Count(step => step.IsWarning) == 1,
+            "The warning should be marked on the step the user saw it on.");
+        Assert(recorded.DescribeOutcome().Contains("warning", StringComparison.OrdinalIgnoreCase),
+            $"Unexpected description '{recorded.DescribeOutcome()}'.");
+
+        // The closing message is what the status bar shows, so it summarises rather
+        // than repeating every warning already reported and recorded above.
+        var closing = seen[^1];
+        Assert(closing.Contains("1 warning", StringComparison.Ordinal),
+            $"The closing message should count the warnings; got '{closing}'.");
+        Assert(!closing.Contains("Headset", StringComparison.Ordinal),
+            $"The closing message should not repeat the warning text; got '{closing}'.");
+        Assert(closing.Length < 80, $"The closing message is too long for a status bar: '{closing}'.");
+
+        // An application may share a name with the profile, so the closing message
+        // has to be distinguishable from an application's own readiness message.
+        Assert(closing.StartsWith("Switched to ", StringComparison.Ordinal),
+            $"The closing message should name the switch, not read like an application's; got '{closing}'.");
+        var appReady = $"{target.Name} is ready.";
+        Assert(closing != appReady,
+            "The profile's closing message must differ from the message an application of the same name produces.");
+    }
+
+    private static async Task TestCancelledActivationRecordedAsync()
+    {
+        var processes = new FakeProcessService();
+        var displays = new FakeDisplayConfigurationService(processes.Events);
+
+        var previousApp = new LaunchApplication { Name = "Previous", Path = "previous.exe" };
+        processes.RunningPaths.Add(previousApp.Path);
+        var previous = new SwitchProfile { Name = "Work", Applications = { previousApp } };
+        var target = new SwitchProfile { Name = "iRacing", Display = new DisplaySnapshot { IsVerified = true } };
+        target.Applications.Add(new LaunchApplication { Name = "Started", Path = "target-started.exe" });
+        target.Applications.Add(new LaunchApplication
+        {
+            Name = "Delayed",
+            Path = "target-delayed.exe",
+            LaunchDelayMs = LaunchApplication.MaximumLaunchDelayMs
+        });
+        var document = new ProfileDocument
+        {
+            ActiveProfileId = previous.Id,
+            Profiles = { previous, target },
+            Settings = { DisplaySettleDelayMs = 0 }
+        };
+
+        var activator = new ProfileActivationService(displays, processes);
+        ActivationRecord? recorded = null;
+        activator.ActivationRecorded += record => recorded = record;
+
+        using var cancellation = new CancellationTokenSource();
+        var activation = activator.ActivateAsync(document, target, _ => { },
+            cancellationToken: cancellation.Token);
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+        while (processes.Launched.Count == 0 && DateTime.UtcNow < deadline) await Task.Delay(10);
+        cancellation.Cancel();
+        try { await activation; } catch (OperationCanceledException) { }
+
+        // A switch that went wrong is exactly the one worth looking at afterwards.
+        Assert(recorded is not null, "A cancelled switch was not recorded.");
+        Assert(recorded!.Outcome == "cancelled", $"Unexpected outcome '{recorded.Outcome}'.");
+        Assert(!recorded.Succeeded, "A cancelled switch must not be reported as succeeded.");
+        Assert(recorded.Steps.Count > 0, "A cancelled switch should still have steps.");
+    }
+
+    private static async Task TestActivationHistoryLabellingAsync()
+    {
+        var processes = new FakeProcessService();
+        var displays = new FakeDisplayConfigurationService(processes.Events);
+        var activator = new ProfileActivationService(displays, processes);
+
+        var recorded = new List<ActivationRecord>();
+        activator.ActivationRecorded += recorded.Add;
+
+        var work = new SwitchProfile { Name = "Work" };
+        var sim = new SwitchProfile { Name = "iRacing" };
+        var document = new ProfileDocument { Profiles = { work, sim }, Settings = { DisplaySettleDelayMs = 0 } };
+
+        // Numbers must keep counting up across a session, so a switch can be named.
+        await activator.ActivateAsync(document, work, _ => { });
+        await activator.ActivateAsync(document, sim, _ => { });
+        await activator.ActivateAsync(document, work, _ => { });
+
+        Assert(recorded.Select(record => record.Sequence).SequenceEqual([1, 2, 3]),
+            $"Switches were numbered {string.Join(", ", recorded.Select(record => record.Sequence))}.");
+        Assert(recorded[1].ProfileName == "iRacing", "The second switch should be the sim profile.");
+
+        // A separate service starts its own count rather than continuing another's.
+        var second = new ProfileActivationService(displays, processes);
+        ActivationRecord? fresh = null;
+        second.ActivationRecorded += record => fresh = record;
+        await second.ActivateAsync(document, work, _ => { });
+        Assert(fresh?.Sequence == 1, $"A new session should start at 1, got {fresh?.Sequence}.");
+
+        // The age label has to stay readable at every scale a long session reaches.
+        var describe = typeof(ActivationHistoryWindow.SwitchRow)
+            .GetMethod("DescribeAge", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException("DescribeAge was not found.");
+        string Age(TimeSpan span) => (string)describe.Invoke(null, [span])!;
+
+        Assert(Age(TimeSpan.FromSeconds(5)) == "just now", "Seconds should read as just now.");
+        Assert(Age(TimeSpan.FromMinutes(3)) == "3 min ago", "Minutes should be counted.");
+        Assert(Age(TimeSpan.FromMinutes(90)) == "1 h ago", "An hour and a half should read in hours.");
+        Assert(Age(TimeSpan.FromHours(30)) == "1 d ago", "Over a day should read in days.");
+        Assert(Age(TimeSpan.FromSeconds(50)) == "1 min ago",
+            "Just under a minute should not round down to zero.");
+        Assert(Age(TimeSpan.FromSeconds(-5)) == "just now",
+            "A clock adjustment must not produce a negative age.");
+    }
+
+    private static Task TestActivationHistoryWindowRendersAsync()
+    {
+        var record = new ActivationRecord { ProfileName = "iRacing" };
+        record.Steps.Add(new ActivationStep(record.StartedUtc, "Applying display layout…", false));
+        record.Steps.Add(new ActivationStep(record.StartedUtc.AddSeconds(3.6), "Switching audio output to Headset…", false));
+        record.Steps.Add(new ActivationStep(record.StartedUtc.AddSeconds(4.1), "Crew Chief did not reach 'window appears' in time.", true));
+        record.Warnings.Add("Crew Chief did not reach 'window appears' in time.");
+        record.Outcome = "succeeded_with_warnings";
+        record.DurationMs = 4200;
+
+        var bindingErrors = new List<string>();
+        var rendered = RenderOffScreen(() => new ActivationHistoryWindow([record]), bindingErrors);
+
+        Assert(bindingErrors.Count == 0,
+            $"The history window reported data binding errors: {string.Join(" | ", bindingErrors)}");
+        foreach (var expected in new[] { "iRacing", "Applying display layout…", "Switching audio output to Headset…" })
+            Assert(rendered.Any(text => text.Contains(expected, StringComparison.Ordinal)),
+                $"'{expected}' never reached the window.");
+        Assert(rendered.Any(text => text.Contains("3.60s", StringComparison.Ordinal)),
+            $"Step timings were not shown. Rendered: {string.Join(" | ", rendered)}");
+        Assert(rendered.Any(text => text.Contains("warning", StringComparison.OrdinalIgnoreCase)),
+            "The outcome should say the switch had warnings.");
+        return Task.CompletedTask;
+    }
+
     private static Task TestRowHeaderOnFirstSelectionAsync()
     {
         var empty = new SwitchProfile { Name = "Work" };

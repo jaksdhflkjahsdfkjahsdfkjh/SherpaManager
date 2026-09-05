@@ -14,6 +14,11 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
     private static readonly TimeSpan AudioEndpointWait = TimeSpan.FromSeconds(15);
 
     private readonly SemaphoreSlim _activationLock = new(1, 1);
+
+    private int _activationSequence;
+
+    /// <summary>Raised once a switch has finished, however it finished.</summary>
+    public event Action<ActivationRecord>? ActivationRecorded;
     private readonly IDiagnosticLog _diagnostics = diagnostics ?? NullDiagnosticLog.Instance;
 
     public async Task<bool> ActivateAsync(ProfileDocument document, SwitchProfile target,
@@ -26,6 +31,22 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
                 new Dictionary<string, object?> { ["targetProfileId"] = target.Id });
             throw new InvalidOperationException("Another profile switch is already in progress.");
         }
+
+        // Wrap the caller's reporter so the history is built from exactly the
+        // messages the user saw, rather than a second description that could drift
+        // away from them.
+        var record = new ActivationRecord
+        {
+            Sequence = Interlocked.Increment(ref _activationSequence),
+            ProfileId = target.Id,
+            ProfileName = target.Name
+        };
+        var callerReport = report;
+        report = message =>
+        {
+            record.Steps.Add(new ActivationStep(DateTime.UtcNow, message, false));
+            callerReport(message);
+        };
 
         var totalDuration = Stopwatch.StartNew();
         var previousStageMilliseconds = 0L;
@@ -64,7 +85,9 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
             // close operation. A prior watcher must never act on an application the
             // profile being activated now wants to keep.
             foreach (var app in targetApps) processes.CancelPendingClose(app);
-            var warnings = new List<string>();
+            // The record owns the warning list, so anything reported as a warning
+            // during the switch is in the history without a second bookkeeping path.
+            var warnings = record.Warnings;
 
             previous = document.Profiles.FirstOrDefault(profile => profile.Id == document.ActiveProfileId);
             previousApplicationsInitiallyRunning = previous is not null && previous.Id != target.Id
@@ -223,8 +246,12 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
             target.LastActivatedUtc = DateTime.UtcNow;
             document.ActiveProfileId = target.Id;
             report(warnings.Count == 0
-                ? $"{target.Name} is ready."
-                : $"{target.Name} is active with {warnings.Count} warning{(warnings.Count == 1 ? string.Empty : "s")}: {string.Join(" ", warnings)}");
+                // "iRacing is ready." also happens to be what an application called
+                // iRacing reports, so name the profile explicitly.
+                ? $"Switched to {target.Name}."
+                // Each warning was already reported as it happened and is kept in
+                // the record, so repeating them all here only buries the outcome.
+                : $"Switched to {target.Name} with {warnings.Count} warning{(warnings.Count == 1 ? string.Empty : "s")}.");
             outcome = warnings.Count == 0 ? "succeeded" : "succeeded_with_warnings";
             return true;
         }
@@ -249,6 +276,16 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
         finally
         {
             totalDuration.Stop();
+            record.Outcome = outcome;
+            record.DurationMs = totalDuration.ElapsedMilliseconds;
+            record.MarkWarnings();
+            try { ActivationRecorded?.Invoke(record); }
+            catch (Exception exception)
+            {
+                // The history is an aid, never a reason to fail a switch that has
+                // already happened.
+                _diagnostics.Error("activation.history.failed", exception);
+            }
             _diagnostics.Write(outcome.StartsWith("succeeded", StringComparison.Ordinal) ? "info" : "warning",
                 "activation.completed", outcome, new Dictionary<string, object?>
                 {

@@ -186,6 +186,8 @@ If a restored layout is unusable:
 
 Profiles are stored in `%APPDATA%\SherpaManager\profiles.json`. Structured diagnostic logs are stored locally in `%LOCALAPPDATA%\SherpaManager\Logs` as JSON Lines. Sherpa keeps at most five approximately 1 MB log files. Paths and command-line arguments are redacted before logging by default.
 
+**Recent switches**, next to the status bar, shows what recent profile switches did, step by step, with the time each step took and any warnings highlighted. **Copy** puts one switch on the clipboard as text, which is usually the fastest way to explain what happened in a bug report. The history covers the current session; the diagnostic log below survives restarts.
+
 Use **Settings → Copy diagnostics** to copy the Sherpa and Windows versions, GPU/display-driver information, NVIDIA API state, current monitor topology, activation timing, native error codes, and recent process-matching decisions. The report can still include profile/application names, monitor model names, process names and IDs, so review it before sharing. Sherpa has no accounts, telemetry, or network service; nothing is uploaded automatically.
 
 ## Known limitations

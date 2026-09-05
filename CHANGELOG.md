@@ -15,6 +15,35 @@ Quality-of-life release.
 
 ### Added
 
+- **Recent switches**, a button beside the status bar, shows what recent profile
+  switches actually
+  did: every step in the order it happened, the seconds it took, warnings
+  highlighted, and the outcome. **Copy** puts one switch on the clipboard as
+  text for a bug report. The history is built from the same messages shown
+  during the switch, so it cannot drift from what was seen, and cancelled or
+  failed switches are recorded too. Kept in memory for the session; the rotating
+  diagnostic log remains the record that survives a restart. Each switch is
+  numbered for the session and drawn as a card with a coloured edge, so a long
+  run of switches stays readable: purple when it succeeded, amber when it
+  finished with warnings, red when it failed. The newest carries a badge, and
+  each shows both the clock time and how long ago it was.
+
+### Changed
+
+- The status bar keeps showing the result of a switch. Window minimizing and
+  application closing are watched for up to 45 seconds afterwards, and a
+  successful outcome from one of those watchers used to replace the result with a
+  note about a single application. Only failures from them take the status bar
+  now.
+- A profile's closing message names the switch — "Switched to iRacing" — rather
+  than reading "iRacing is ready", which was indistinguishable from the readiness
+  message of an application that shares the profile's name.
+- The status bar reports the result of a switch rather than its last progress
+  message, and colours it: plain when a switch succeeded, amber when it finished
+  with warnings or was cancelled, red when it failed, with the error text
+  included. Individual warnings are reported as they happen and kept in the
+  switch history, so the closing message counts them instead of concatenating
+  them into a line too long to read.
 - Per-profile audio output and input. A profile can make a chosen playback and
   recording device the Windows default when it activates, covering both ordinary playback and
   communications. The switch happens before applications start, because most sim
