@@ -82,6 +82,7 @@ internal static class Program
             ("Applications start in the order they are listed", TestLaunchOrderAsync),
             ("A readiness timeout warns without failing the switch", TestReadinessTimeoutAsync),
             ("Readiness detects a real fixture window", TestReadinessDetectsWindowAsync),
+            ("Waiting for an app to start outlasts a slow startup", TestReadinessOutlastsSlowStartupAsync),
             ("Display layouts survive layouts that cannot be drawn", TestDisplayLayoutEdgeCasesAsync),
             ("The display layout window renders every monitor", TestDisplayLayoutWindowRendersAsync),
             ("Application rows are numbered", TestApplicationRowNumbersRenderAsync),
@@ -2007,6 +2008,57 @@ internal static class Program
         Assert(processes.Launched.Count == 2, "Later applications must still start after a timeout.");
         Assert(reports.Any(message => message.Contains("did not reach", StringComparison.OrdinalIgnoreCase)),
             $"The timeout was not reported. Reports: {string.Join(" | ", reports)}");
+    }
+
+    /// <summary>
+    /// The default rule has to survive an application that exists long before it
+    /// is usable.
+    /// </summary>
+    /// <remarks>
+    /// This is the regression for the rule doing nothing at all: a process exists
+    /// the moment it is started, so "is it running" was satisfied within
+    /// milliseconds and every application in a profile launched at once. Measured
+    /// against this fixture, the process was there after 7ms and ready after
+    /// 3,042ms.
+    /// </remarks>
+    private static async Task TestReadinessOutlastsSlowStartupAsync()
+    {
+        using var directory = new TemporaryDirectory();
+        var fixtureDirectory = Path.Combine(directory.Path, "fixture");
+        CopyFixtureOutput(fixtureDirectory);
+        const string processName = "SlowFixture";
+        var executable = Path.Combine(fixtureDirectory, processName + ".exe");
+        File.Move(Path.Combine(fixtureDirectory, "WindowFixture.exe"), executable);
+
+        const int startupMs = 2000;
+        var service = new ProcessService();
+        var app = new LaunchApplication
+        {
+            Name = "Slow fixture",
+            Path = executable,
+            Arguments = $"--startup-delay-ms={startupMs}",
+            ProcessName = processName,
+            StartMinimized = true
+        };
+
+        try
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            Assert((await service.LaunchAsync(app, CancellationToken.None)).Started, "The slow fixture did not start.");
+            var afterLaunch = clock.ElapsedMilliseconds;
+
+            var ready = await service.WaitUntilReadyAsync(app, LaunchReadiness.ProcessRunning,
+                TimeSpan.FromSeconds(20), CancellationToken.None);
+            var afterWait = clock.ElapsedMilliseconds;
+
+            Assert(ready.Ready, $"The fixture never became ready: {ready.Message}");
+            // Generous, because the point is that it waited at all rather than
+            // returning the instant the process appeared.
+            Assert(afterWait >= startupMs * 0.7,
+                $"The wait returned after {afterWait}ms, so it did not outlast a {startupMs}ms startup. " +
+                $"Launching alone took {afterLaunch}ms.");
+        }
+        finally { await service.CloseAsync(app, CancellationToken.None); }
     }
 
     /// <summary>

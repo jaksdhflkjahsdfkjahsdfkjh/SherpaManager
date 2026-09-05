@@ -67,7 +67,7 @@ public partial class MainWindow : Window
         LaunchReadinessCombo.ItemsSource = new[]
         {
             new ReadinessOption(LaunchReadiness.None, "Nothing"),
-            new ReadinessOption(LaunchReadiness.ProcessRunning, "It to start"),
+            new ReadinessOption(LaunchReadiness.ProcessRunning, "It to finish starting"),
             new ReadinessOption(LaunchReadiness.WindowVisible, "Its window"),
             new ReadinessOption(LaunchReadiness.WindowResponsive, "It to respond")
         };

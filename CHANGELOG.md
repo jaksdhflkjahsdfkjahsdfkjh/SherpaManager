@@ -44,6 +44,16 @@ Quality-of-life release.
 
 ### Fixed
 
+- Waiting for an application to start now waits for something. The default rule
+  was satisfied as soon as a matching process existed, which is true the instant
+  an application is launched, so every application in a profile started at once
+  and the order was decorative. Measured against a fixture that sleeps three
+  seconds before opening, the process was there after 262ms and actually ready
+  after 3,324ms. The rule now waits for the process to finish starting and reach
+  its message loop, which also holds for tray applications that never show a
+  window; anything without a message loop, such as a console application, is
+  treated as ready immediately, as before. The setting is relabelled
+  "It to finish starting".
 - The warning flags and the launch order now follow the application list as it
   is edited. They were refreshed by each editor action asking for it, and two
   actions never did: browsing for an executable left the new entry unnumbered

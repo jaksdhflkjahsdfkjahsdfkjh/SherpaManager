@@ -143,12 +143,12 @@ Applications start in the order they are listed, and the grid numbers them so th
 
 Reorder with the arrow buttons, or by dragging a row. Dragging is locked by default so that a stray drag while editing cannot silently change the order; the padlock button beside the arrows unlocks it, and the choice is remembered; it turns and changes colour when reordering is unlocked. The columns do not sort, because sorting the view would have shown an order that is not the order things start in.
 
-**Settings → Before starting the next app, wait for** controls how much waiting happens:
+**Settings → Before starting the next app, wait for** controls how much waiting happens. The number beside it is a ceiling, not a delay: Sherpa gives up and warns after it, and never sleeps for it.
 
 | Setting | Sherpa continues when |
 | --- | --- |
 | Nothing | Immediately after launching |
-| It to start | A matching process exists (default) |
+| It to finish starting | The process has finished starting and is waiting for input (default) |
 | Its window | That process owns a visible window |
 | It to respond | That window is also answering messages |
 

@@ -34,6 +34,11 @@ internal static class Program
             return;
         }
 
+        // Models an application that exists immediately but is not ready for a
+        // while: the process is there at once, its message loop is not.
+        var startupDelay = ReadIntegerArgument(args, "--startup-delay-ms=");
+        if (startupDelay is > 0) Thread.Sleep(startupDelay.Value);
+
         var ignoreClose = args.Contains("--ignore-close", StringComparer.OrdinalIgnoreCase);
         var hidden = args.Contains("--hidden", StringComparer.OrdinalIgnoreCase);
         var minimizedStateFile = ReadStringArgument(args, "--state-file=");

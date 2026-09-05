@@ -226,7 +226,7 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null, IDiagn
         {
             var alive = processes.Where(IsAlive).ToList();
             if (alive.Count == 0) return false;
-            if (readiness == LaunchReadiness.ProcessRunning) return true;
+            if (readiness == LaunchReadiness.ProcessRunning) return alive.Any(HasFinishedStarting);
 
             var processIds = alive.Select(process => (uint)process.Id).ToHashSet();
             if (!HasVisibleWindow(processIds)) return false;
@@ -242,6 +242,30 @@ public sealed class ProcessService(LaunchTargetResolver? resolver = null, IDiagn
             });
         }
         finally { DisposeAll(processes); }
+    }
+
+    /// <summary>
+    /// True when a process has finished the work it does before it is ready for
+    /// input.
+    /// </summary>
+    /// <remarks>
+    /// A process exists the instant it is started, so "is it running" was no gate
+    /// at all: measured against a fixture that sleeps three seconds on startup,
+    /// the process was there after 7ms and idle after 3,042ms. Waiting for the
+    /// input queue to drain tracks the real startup, and unlike waiting for a
+    /// window it is also satisfied by tray applications, which pump messages
+    /// without ever showing one.
+    /// </remarks>
+    private static bool HasFinishedStarting(Process process)
+    {
+        try { return process.WaitForInputIdle(0); }
+        catch
+        {
+            // Console applications and anything without a message loop can never
+            // report idle. Nothing better is available for them, so being alive
+            // stays the answer rather than costing the whole timeout.
+            return true;
+        }
     }
 
     /// <summary>
