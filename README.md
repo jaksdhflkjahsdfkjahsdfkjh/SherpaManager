@@ -122,6 +122,18 @@ A profile can be activated without opening the window.
 
 If Sherpa Manager is already running, a second launch hands its request to the running copy rather than starting a rival instance. Every route runs the same activation as the button does, including the preview and the display confirmation countdown, so nothing bypasses the safety steps.
 
+## Audio output
+
+A profile can switch the default Windows playback device when it activates. Choose one under **Audio output** in the profile editor, or leave it on **Do not change**.
+
+The switch covers ordinary playback and communications together, and happens before any application starts, because most sim titles and voice applications read the default output once at launch and never look again.
+
+If the profile also changes displays, Sherpa waits up to 15 seconds for the chosen device to appear before giving up. A monitor's own speakers or headphone jack are an audio endpoint that does not exist until Windows has finished enabling that monitor, and it arrives noticeably later than the picture does — so selecting a monitor's audio output for a profile that switches to that monitor works. When the profile changes no displays, an absent device is treated as absent immediately rather than making you wait.
+
+If the device never appears, Sherpa leaves the output alone and reports a warning rather than failing the switch; a device you have chosen but unplugged is still listed in the editor so the choice is not silently discarded.
+
+Windows offers no supported way to change the default playback device. Sherpa uses the same undocumented interface every tool for this uses, which has been stable since Windows Vista but is not guaranteed; failures are reported rather than hidden.
+
 ## Window and tray behavior
 
 - Starting Sherpa again restores and activates the existing instance.

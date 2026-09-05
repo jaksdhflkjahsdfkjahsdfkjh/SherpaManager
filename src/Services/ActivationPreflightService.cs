@@ -7,7 +7,8 @@ namespace SherpaManager.Services;
 /// applying anything. It reads the live display topology and asks the process
 /// service what is currently running, but it never changes either.
 /// </summary>
-public sealed class ActivationPreflightService(IDisplayConfigurationService displays, IProcessService processes)
+public sealed class ActivationPreflightService(IDisplayConfigurationService displays, IProcessService processes,
+    IAudioDeviceService? audio = null)
 {
     public ActivationPreflight Build(ProfileDocument document, SwitchProfile target)
     {
@@ -20,6 +21,8 @@ public sealed class ActivationPreflightService(IDisplayConfigurationService disp
 
         preflight.Sections.Add(BuildDisplaySection(document, target, current, captureFailure));
         preflight.Sections.Add(BuildSurroundSection(target, current, captureFailure));
+
+        preflight.Sections.Add(BuildAudioSection(target, target.Display is not null));
 
         var startSection = BuildStartSection(target, out var targetIdentities);
         var previous = document.Profiles.FirstOrDefault(profile => profile.Id == document.ActiveProfileId);
@@ -91,6 +94,55 @@ public sealed class ActivationPreflightService(IDisplayConfigurationService disp
                 $"Applications wait {settleDelay / 1000.0:0.#} seconds after the displays change.",
                 "This gives the monitors time to finish switching before anything is started or closed."));
 
+        return section;
+    }
+
+    private PreflightSection BuildAudioSection(SwitchProfile target, bool displayWillChange)
+    {
+        var section = new PreflightSection("Audio output");
+
+        if (string.IsNullOrWhiteSpace(target.AudioOutputDeviceId))
+        {
+            section.Items.Add(new PreflightItem(PreflightSeverity.Info,
+                "The audio output will not change.",
+                "This profile is set to leave the default playback device alone."));
+            return section;
+        }
+
+        var wanted = target.AudioOutputDeviceName is { Length: > 0 } name ? name : "the saved device";
+        if (audio is null || !audio.IsAvailable)
+        {
+            section.Items.Add(new PreflightItem(PreflightSeverity.Caution,
+                $"Audio should switch to {wanted}, but Windows audio could not be read.",
+                "The switch will continue and report a warning."));
+            return section;
+        }
+
+        var current = audio.GetDefaultOutputDevice();
+        if (current is not null && current.Id == target.AudioOutputDeviceId)
+        {
+            section.Items.Add(new PreflightItem(PreflightSeverity.Info,
+                $"Audio output is already {current.Name}."));
+            return section;
+        }
+
+        if (audio.GetOutputDevices().All(device => device.Id != target.AudioOutputDeviceId))
+        {
+            // A monitor's audio endpoint only exists once that monitor is on, so a
+            // device missing now may well arrive as part of this very switch.
+            section.Items.Add(displayWillChange
+                ? new PreflightItem(PreflightSeverity.Caution,
+                    $"The audio device {wanted} is not connected yet.",
+                    "If it belongs to a monitor this profile enables, Sherpa waits for it to appear after the displays change. Otherwise the output is left as it is.")
+                : new PreflightItem(PreflightSeverity.Problem,
+                    $"The audio device {wanted} is not connected.",
+                    "The output will be left as it is and the switch will report a warning."));
+            return section;
+        }
+
+        section.Items.Add(new PreflightItem(PreflightSeverity.Info,
+            $"Switch audio output to {wanted}.",
+            current is null ? null : $"Currently {current.Name}. Playback and communications are both changed."));
         return section;
     }
 

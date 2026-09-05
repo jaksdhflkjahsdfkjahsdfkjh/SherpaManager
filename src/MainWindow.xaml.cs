@@ -23,6 +23,7 @@ public partial class MainWindow : Window
     private readonly GlobalHotkeyService _hotkeys;
     private readonly StartupRegistrationService _startup;
     private readonly ShortcutService _shortcuts;
+    private readonly AudioDeviceService _audio;
     private readonly System.Drawing.Icon? _applicationIcon;
     private readonly Forms.NotifyIcon _trayIcon;
     private readonly HashSet<SwitchProfile> _observedProfiles = [];
@@ -62,8 +63,12 @@ public partial class MainWindow : Window
             new SurroundModeOption(NvidiaSurroundMode.RequireEnabled, "Require enabled"),
             new SurroundModeOption(NvidiaSurroundMode.RequireDisabled, "Require disabled")
         };
-        _activator = new ProfileActivationService(_displays, _processes, _diagnostics);
-        _preflight = new ActivationPreflightService(_displays, _processes);
+        // Must exist before the services that take it: a readonly field is still
+        // null until assigned, and the parameter is optional, so a late assignment
+        // compiles cleanly and silently disables audio switching.
+        _audio = new AudioDeviceService(_diagnostics);
+        _activator = new ProfileActivationService(_displays, _processes, _diagnostics, _audio);
+        _preflight = new ActivationPreflightService(_displays, _processes, _audio);
         _hotkeys = new GlobalHotkeyService(_diagnostics);
         _startup = new StartupRegistrationService(_diagnostics);
         _shortcuts = new ShortcutService(_diagnostics);
@@ -127,6 +132,7 @@ public partial class MainWindow : Window
         RebuildStartupProfileCombo();
         _loadingSettings = false;
         UpdateHotkeyButton();
+        RebuildAudioOutputCombo();
         ApplyHotkeys();
         try { await _store.SaveAsync(_document); }
         catch (Exception ex) { ShowError("Could not save profiles", ex); }
@@ -324,6 +330,66 @@ public partial class MainWindow : Window
         HotkeyButton.Content = SelectedProfile is { Hotkey.Length: > 0 } profile
             ? profile.Hotkey
             : "Set shortcut…";
+    }
+
+    /// <summary>
+    /// Lists the connected playback devices plus a "do not change" entry. A device
+    /// the profile wants but which is not currently connected is kept in the list
+    /// so opening the editor with a headset unplugged does not quietly discard the
+    /// choice.
+    /// </summary>
+    private void RebuildAudioOutputCombo()
+    {
+        if (!_profilesLoaded) return;
+
+        var wasLoading = _loadingSettings;
+        _loadingSettings = true;
+        try
+        {
+            var options = new List<AudioOutputOption> { new(string.Empty, "Do not change") };
+            options.AddRange(_audio.GetOutputDevices().Select(device => new AudioOutputOption(device.Id, device.Name)));
+
+            var profile = SelectedProfile;
+            if (profile is { AudioOutputDeviceId.Length: > 0 } &&
+                options.All(option => option.Id != profile.AudioOutputDeviceId))
+            {
+                var name = profile.AudioOutputDeviceName is { Length: > 0 } saved ? saved : "Saved device";
+                options.Add(new AudioOutputOption(profile.AudioOutputDeviceId, $"{name} (not connected)"));
+            }
+
+            AudioOutputCombo.ItemsSource = options;
+            AudioOutputCombo.SelectedValue = profile?.AudioOutputDeviceId ?? string.Empty;
+            if (AudioOutputCombo.SelectedItem is null) AudioOutputCombo.SelectedIndex = 0;
+            AudioOutputCombo.IsEnabled = profile is not null;
+        }
+        finally { _loadingSettings = wasLoading; }
+    }
+
+    private async void AudioOutput_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingSettings || !IsLoaded || !_profilesLoaded) return;
+        if (SelectedProfile is not { } profile) return;
+
+        var selected = AudioOutputCombo.SelectedItem as AudioOutputOption;
+        profile.AudioOutputDeviceId = selected?.Id ?? string.Empty;
+        // Store the label without the "(not connected)" suffix so it stays correct
+        // once the device comes back.
+        profile.AudioOutputDeviceName = selected is null || selected.Id.Length == 0
+            ? string.Empty
+            : selected.Label.Replace(" (not connected)", string.Empty, StringComparison.Ordinal);
+
+        StatusText.Text = profile.AudioOutputDeviceId.Length == 0
+            ? $"{profile.Name} will leave the audio output unchanged."
+            : $"{profile.Name} will switch audio output to {profile.AudioOutputDeviceName}.";
+        await SaveAsync();
+    }
+
+    private void RefreshAudioDevices_Click(object sender, RoutedEventArgs e)
+    {
+        RebuildAudioOutputCombo();
+        StatusText.Text = _audio.IsAvailable
+            ? "Playback devices refreshed."
+            : "Windows audio devices could not be read.";
     }
 
     private void CreateShortcut_Click(object sender, RoutedEventArgs e)
@@ -827,6 +893,7 @@ public partial class MainWindow : Window
     {
         if (SelectedProfile is { } selectedProfile) _profileBeforeSettings = selectedProfile;
         EndHotkeyCapture();
+        RebuildAudioOutputCombo();
         if (!IsLoaded || _openingSettings || SelectedProfile is null) return;
         MainTabs.SelectedIndex = 0;
         await SaveAsync();
@@ -1354,6 +1421,8 @@ public partial class MainWindow : Window
     private sealed record SurroundModeOption(NvidiaSurroundMode Value, string Label);
 
     private sealed record StartupProfileOption(Guid? Value, string Label);
+
+    public sealed record AudioOutputOption(string Id, string Label);
 
     private enum CloseSaveDecision
     {

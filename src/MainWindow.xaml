@@ -176,6 +176,25 @@
                     </Border>
 
                     <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="10" Padding="14,10" Margin="0,0,0,16">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="AUDIO OUTPUT" FontSize="11" FontWeight="SemiBold"
+                                       VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}"/>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                <ComboBox x:Name="AudioOutputCombo" Width="330"
+                                          DisplayMemberPath="Label" SelectedValuePath="Id"
+                                          SelectionChanged="AudioOutput_SelectionChanged"
+                                          ToolTip="The playback device to make default when this profile is activated."/>
+                                <Button Content="Refresh" Click="RefreshAudioDevices_Click" Margin="8,0,0,0"
+                                        ToolTip="Re-read the connected playback devices."/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="10" Padding="14,10" Margin="0,0,0,16">
                         <StackPanel>
                             <Grid>
                                 <Grid.ColumnDefinitions>

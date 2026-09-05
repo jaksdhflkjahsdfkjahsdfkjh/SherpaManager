@@ -4,8 +4,15 @@ using SherpaManager.Models;
 namespace SherpaManager.Services;
 
 public sealed class ProfileActivationService(IDisplayConfigurationService displays, IProcessService processes,
-    IDiagnosticLog? diagnostics = null)
+    IDiagnosticLog? diagnostics = null, IAudioDeviceService? audio = null)
 {
+    /// <summary>
+    /// How long to wait for a monitor's audio endpoint to appear after that
+    /// monitor is enabled. Windows registers it well after the display itself is
+    /// usable.
+    /// </summary>
+    private static readonly TimeSpan AudioEndpointWait = TimeSpan.FromSeconds(15);
+
     private readonly SemaphoreSlim _activationLock = new(1, 1);
     private readonly IDiagnosticLog _diagnostics = diagnostics ?? NullDiagnosticLog.Instance;
 
@@ -35,7 +42,9 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
             ["targetProfileId"] = target.Id,
             ["applicationCount"] = target.Applications.Count,
             ["hasDisplayLayout"] = target.Display is not null,
-            ["surroundMode"] = target.NvidiaSurroundMode
+            ["surroundMode"] = target.NvidiaSurroundMode,
+            ["audioDeviceRequested"] = !string.IsNullOrWhiteSpace(target.AudioOutputDeviceId),
+            ["audioServiceAvailable"] = audio is not null
         });
         SwitchProfile? previous = null;
         IReadOnlyCollection<LaunchApplication> previousApplicationsInitiallyRunning = [];
@@ -101,6 +110,11 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
                 report("Keeping the current display layout.");
                 LogStage("display.skipped");
             }
+
+            // Before applications start: many sim and voice applications read the
+            // default output once at launch and never look again.
+            await ApplyAudioOutputAsync(target, displayApplied, report, warnings, cancellationToken);
+            LogStage("audio.completed");
 
             if (previous is not null && previous.Id != target.Id)
             {
@@ -221,6 +235,90 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
                 }, totalDuration.ElapsedMilliseconds);
             _activationLock.Release();
         }
+    }
+
+    /// <summary>
+    /// Switches the default audio output when the profile asks for one. A failure
+    /// is a warning, never a rollback: audio is recoverable in two clicks and is
+    /// not worth abandoning an otherwise good display and application switch.
+    /// </summary>
+    private async Task ApplyAudioOutputAsync(SwitchProfile target, bool displayApplied, Action<string> report,
+        List<string> warnings, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(target.AudioOutputDeviceId) || audio is null)
+        {
+            // Logged rather than returned quietly: a silent skip here is
+            // indistinguishable from a switch that did not work.
+            _diagnostics.Write("info", "activation.audio.skipped",
+                audio is null ? "No audio service was supplied." : "The profile selects no audio device.");
+            return;
+        }
+
+        var wanted = target.AudioOutputDeviceName is { Length: > 0 } name ? name : "the saved device";
+        try
+        {
+            if (audio.GetDefaultOutputDevice() is { } current && current.Id == target.AudioOutputDeviceId)
+            {
+                report($"Audio output is already {current.Name}.");
+                return;
+            }
+
+            if (!await WaitForAudioDeviceAsync(target.AudioOutputDeviceId, displayApplied, wanted, report,
+                    cancellationToken))
+            {
+                var missing = $"The audio device for {target.Name} ({wanted}) is not connected, so the output was left unchanged.";
+                report(missing);
+                warnings.Add(missing);
+                return;
+            }
+
+            report($"Switching audio output to {wanted}…");
+            audio.SetDefaultOutputDevice(target.AudioOutputDeviceId);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception exception)
+        {
+            _diagnostics.Error("activation.audio.failed", exception, new Dictionary<string, object?>
+            {
+                ["targetProfileId"] = target.Id
+            });
+            var warning = $"Could not switch the audio output to {wanted}: {exception.Message}";
+            report(warning);
+            warnings.Add(warning);
+        }
+    }
+
+    /// <summary>
+    /// Waits for an audio endpoint to appear, when a display change could be what
+    /// brings it.
+    /// </summary>
+    /// <remarks>
+    /// A monitor's audio endpoint does not exist until Windows has finished
+    /// enabling that monitor, and it arrives some time after the topology call
+    /// returns. Enumerating immediately finds nothing and the profile silently
+    /// keeps the old output. Only waited for when this switch actually applied a
+    /// display layout: with no display change, an absent device is genuinely
+    /// absent and making the user wait would be pointless.
+    /// </remarks>
+    private async Task<bool> WaitForAudioDeviceAsync(string deviceId, bool displayApplied, string wanted,
+        Action<string> report, CancellationToken cancellationToken)
+    {
+        if (audio is null) return false;
+        if (audio.GetOutputDevices().Any(device => device.Id == deviceId)) return true;
+        if (!displayApplied) return false;
+
+        report($"Waiting for {wanted} to become available…");
+        var deadline = DateTime.UtcNow + AudioEndpointWait;
+        while (DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(500, cancellationToken).ConfigureAwait(false);
+            if (!audio.GetOutputDevices().Any(device => device.Id == deviceId)) continue;
+
+            _diagnostics.Write("info", "activation.audio.endpoint_appeared");
+            return true;
+        }
+
+        return false;
     }
 
     private IReadOnlyCollection<LaunchApplication> FindRunningPreviousApplications(SwitchProfile previous,

@@ -70,6 +70,11 @@ internal static class Program
             ("The display settle delay is bounded", TestDisplaySettleDelayBoundsAsync),
             ("The NVIDIA app is found where it is actually installed", TestNvidiaAppLocatorAsync),
             ("Display layouts scale and place every monitor", TestDisplayLayoutGeometryAsync),
+            ("Audio endpoints can be enumerated", TestAudioEnumerationAsync),
+            ("Audio output switches before applications start", TestAudioAppliedBeforeLaunchAsync),
+            ("A disconnected audio device warns without failing the switch", TestAudioMissingDeviceAsync),
+            ("Audio preview reports the pending change", TestAudioPreviewAsync),
+            ("A monitor audio endpoint is waited for after the display comes up", TestAudioEndpointAppearsLateAsync),
             ("Display layouts survive layouts that cannot be drawn", TestDisplayLayoutEdgeCasesAsync),
             ("The display layout window renders every monitor", TestDisplayLayoutWindowRendersAsync)
         };
@@ -1797,6 +1802,231 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// A monitor's audio endpoint does not exist until Windows has finished
+    /// enabling that monitor, so it appears after the display step returns.
+    /// </summary>
+    private static async Task TestAudioEndpointAppearsLateAsync()
+    {
+        var processes = new FakeProcessService();
+        var displays = new FakeDisplayConfigurationService(processes.Events);
+        var monitorSpeakers = new AudioDevice("monitor", "ASUS VG249 (NVIDIA High Definition Audio)");
+        var audio = new FakeAudioDeviceService(processes.Events)
+        {
+            Devices = { new AudioDevice("usb", "Speakers (USB Audio Device)") },
+            DefaultId = "usb",
+            // The endpoint shows up only on the third enumeration, well after the
+            // display call has returned.
+            AppearAfterQueries = (3, monitorSpeakers)
+        };
+
+        var target = new SwitchProfile
+        {
+            Name = "Work",
+            Display = new DisplaySnapshot(),
+            AudioOutputDeviceId = "monitor",
+            AudioOutputDeviceName = monitorSpeakers.Name
+        };
+        target.Applications.Add(new LaunchApplication { Name = "Mail", Path = @"C:\work\mail.exe" });
+        var document = new ProfileDocument { Profiles = { target }, Settings = { DisplaySettleDelayMs = 0 } };
+
+        var reports = new List<string>();
+        Assert(await new ProfileActivationService(displays, processes, null, audio)
+                .ActivateAsync(document, target, reports.Add),
+            "The switch should succeed.");
+
+        Assert(audio.DefaultId == "monitor",
+            $"The monitor endpoint should have become default once it appeared; got '{audio.DefaultId}'.");
+        Assert(reports.Any(message => message.Contains("Waiting for", StringComparison.OrdinalIgnoreCase)),
+            $"The wait should be reported. Reports: {string.Join(" | ", reports)}");
+
+        var order = processes.Events;
+        Assert(order.IndexOf("audio:set:monitor") < order.IndexOf(@"launch:C:\work\mail.exe"),
+            "Audio must still be switched before applications start.");
+
+        // With no display change there is nothing that could bring the endpoint,
+        // so the switch must not stall waiting for it.
+        var noDisplay = new SwitchProfile
+        {
+            Name = "Portable",
+            AudioOutputDeviceId = "absent",
+            AudioOutputDeviceName = "Headset"
+        };
+        document.Profiles.Add(noDisplay);
+        var quiet = new FakeAudioDeviceService(processes.Events)
+        {
+            Devices = { new AudioDevice("usb", "Speakers (USB Audio Device)") },
+            DefaultId = "usb"
+        };
+        var started = DateTime.UtcNow;
+        var quietReports = new List<string>();
+        Assert(await new ProfileActivationService(displays, processes, null, quiet)
+                .ActivateAsync(document, noDisplay, quietReports.Add),
+            "A profile with no display layout should still activate.");
+        Assert(DateTime.UtcNow - started < TimeSpan.FromSeconds(5),
+            "A profile that changes no displays must not wait for an absent audio device.");
+        Assert(quietReports.All(message => !message.Contains("Waiting for", StringComparison.OrdinalIgnoreCase)),
+            "No wait should be reported when no display change could produce the device.");
+    }
+
+    private static async Task TestAudioAppliedBeforeLaunchAsync()
+    {
+        var processes = new FakeProcessService();
+        var displays = new FakeDisplayConfigurationService(processes.Events);
+        var audio = new FakeAudioDeviceService(processes.Events)
+        {
+            Devices = { new AudioDevice("headset", "Sim headset"), new AudioDevice("speakers", "Desk speakers") },
+            DefaultId = "speakers"
+        };
+
+        var target = new SwitchProfile
+        {
+            Name = "iRacing",
+            AudioOutputDeviceId = "headset",
+            AudioOutputDeviceName = "Sim headset"
+        };
+        target.Applications.Add(new LaunchApplication { Name = "Sim", Path = @"C:\sim\app.exe" });
+        var document = new ProfileDocument { Profiles = { target }, Settings = { DisplaySettleDelayMs = 0 } };
+
+        var activated = await new ProfileActivationService(displays, processes, null, audio)
+            .ActivateAsync(document, target, _ => { });
+
+        Assert(activated, "The switch should succeed.");
+        Assert(audio.DefaultId == "headset", $"The default output was left as '{audio.DefaultId}'.");
+
+        // Applications read the default output once at launch, so the switch has
+        // to happen first.
+        var order = processes.Events;
+        var applied = order.IndexOf("audio:set:headset");
+        Assert(applied >= 0, $"The audio switch was never applied. Events: {string.Join(", ", order)}");
+        Assert(applied < order.IndexOf(@"launch:C:\sim\app.exe"),
+            "Audio must be switched before applications are started.");
+
+        // Activating again must not re-apply what is already correct.
+        audio.SetCalls = 0;
+        await new ProfileActivationService(displays, processes, null, audio)
+            .ActivateAsync(document, target, _ => { });
+        Assert(audio.SetCalls == 0, "An audio device that is already default should not be set again.");
+    }
+
+    private static async Task TestAudioMissingDeviceAsync()
+    {
+        var processes = new FakeProcessService();
+        var displays = new FakeDisplayConfigurationService(processes.Events);
+        var audio = new FakeAudioDeviceService(processes.Events)
+        {
+            Devices = { new AudioDevice("speakers", "Desk speakers") },
+            DefaultId = "speakers"
+        };
+
+        var target = new SwitchProfile
+        {
+            Name = "iRacing",
+            AudioOutputDeviceId = "headset",
+            AudioOutputDeviceName = "Sim headset"
+        };
+        target.Applications.Add(new LaunchApplication { Name = "Sim", Path = @"C:\sim\app.exe" });
+        var document = new ProfileDocument { Profiles = { target }, Settings = { DisplaySettleDelayMs = 0 } };
+
+        var reports = new List<string>();
+        var activated = await new ProfileActivationService(displays, processes, null, audio)
+            .ActivateAsync(document, target, reports.Add);
+
+        // An unplugged headset must not cost the user their profile switch.
+        Assert(activated, "A missing audio device must not fail the switch.");
+        Assert(audio.SetCalls == 0, "A device that is not connected should never be set.");
+        Assert(processes.Launched.Count == 1, "Applications should still start.");
+        Assert(reports.Any(message => message.Contains("not connected", StringComparison.OrdinalIgnoreCase)),
+            $"The user was not told the device was missing. Reports: {string.Join(" | ", reports)}");
+
+        // A failing device switch is also only a warning.
+        audio.Devices.Add(new AudioDevice("headset", "Sim headset"));
+        audio.ThrowOnSet = true;
+        reports.Clear();
+        var second = new SwitchProfile
+        {
+            Name = "ACC",
+            AudioOutputDeviceId = "headset",
+            AudioOutputDeviceName = "Sim headset"
+        };
+        document.Profiles.Add(second);
+        Assert(await new ProfileActivationService(displays, processes, null, audio)
+                .ActivateAsync(document, second, reports.Add),
+            "A failing audio switch must not fail the profile switch.");
+        Assert(reports.Any(message => message.Contains("Could not switch the audio", StringComparison.OrdinalIgnoreCase)),
+            $"The failure was not reported. Reports: {string.Join(" | ", reports)}");
+    }
+
+    private static Task TestAudioPreviewAsync()
+    {
+        var (document, target, processes, displays) = PreviewFixture();
+        var audio = new FakeAudioDeviceService(processes.Events)
+        {
+            Devices = { new AudioDevice("headset", "Sim headset"), new AudioDevice("speakers", "Desk speakers") },
+            DefaultId = "speakers"
+        };
+
+        var service = new ActivationPreflightService(displays, processes, audio);
+
+        var unchanged = ItemsIn(service.Build(document, target), "Audio output");
+        Assert(Mentions(unchanged, PreflightSeverity.Info, "will not change"),
+            "A profile with no audio device should say the output is left alone.");
+
+        target.AudioOutputDeviceId = "headset";
+        target.AudioOutputDeviceName = "Sim headset";
+        var switching = ItemsIn(service.Build(document, target), "Audio output");
+        Assert(Mentions(switching, PreflightSeverity.Info, "Switch audio output", "Sim headset"),
+            "A pending audio change should be listed.");
+
+        audio.DefaultId = "headset";
+        var already = ItemsIn(service.Build(document, target), "Audio output");
+        Assert(Mentions(already, PreflightSeverity.Info, "already"),
+            "No change should be reported when the device is already default.");
+
+        audio.Devices.RemoveAll(device => device.Id == "headset");
+        audio.DefaultId = "speakers";
+        var missing = ItemsIn(service.Build(document, target), "Audio output");
+        Assert(Mentions(missing, PreflightSeverity.Problem, "not connected"),
+            "A disconnected device should be a problem the user sees before switching.");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestAudioEnumerationAsync()
+    {
+        var service = new AudioDeviceService();
+        if (!service.IsAvailable)
+        {
+            // A build agent may have no audio stack at all. Enumeration must then
+            // degrade to empty rather than throwing.
+            Assert(service.GetOutputDevices().Count == 0,
+                "An unavailable audio stack should report no devices, not throw.");
+            Assert(service.GetDefaultOutputDevice() is null,
+                "An unavailable audio stack should report no default device.");
+            return Task.CompletedTask;
+        }
+
+        var devices = service.GetOutputDevices();
+        foreach (var device in devices)
+        {
+            Assert(!string.IsNullOrWhiteSpace(device.Id), "Every endpoint needs an identifier.");
+            Assert(!string.IsNullOrWhiteSpace(device.Name), "Every endpoint needs a name.");
+        }
+        Assert(devices.Select(device => device.Id).Distinct().Count() == devices.Count,
+            "Endpoint identifiers must be unique.");
+
+        var current = service.GetDefaultOutputDevice();
+        if (current is not null)
+            Assert(devices.Any(device => device.Id == current.Id),
+                $"The default endpoint '{current.Name}' was not in the enumerated list.");
+
+        if (Environment.GetEnvironmentVariable("SHERPA_PROBE_AUDIO") == "1")
+        {
+            Console.WriteLine($"[probe] default = {current?.Name ?? "(none)"}");
+            foreach (var device in devices) Console.WriteLine($"[probe]   {device.Name}  ({device.Id})");
+        }
+        return Task.CompletedTask;
+    }
+
     private static Task TestDisplayLayoutGeometryAsync()
     {
         // Two 1920x1080 monitors side by side, the right one primary at the origin.
@@ -2148,39 +2378,49 @@ internal static class Program
         return Task.CompletedTask;
     }
 
-    private static System.Windows.Threading.Dispatcher? _uiDispatcher;
+    private static System.Collections.Concurrent.BlockingCollection<Action>? _uiWork;
     private static readonly object UiGate = new();
 
     /// <summary>
-    /// One STA thread with a running dispatcher and a single WPF Application,
-    /// shared by every window test.
+    /// One STA thread owning a single WPF Application, running test delegates
+    /// directly rather than through a dispatcher message loop.
     /// </summary>
     /// <remarks>
-    /// Application.Current is per process but has thread affinity. A second test
-    /// creating its own thread finds Application.Current already owned by the
-    /// first, and its window then builds no visual tree at all - silently, with
-    /// no exception to catch. One UI thread also matches how the app really runs.
+    /// Two things are load-bearing here. Application.Current is per process but
+    /// has thread affinity, so a second test creating its own thread finds it
+    /// already owned and its window then builds no visual tree at all, silently.
+    /// And the thread must not run Dispatcher.Run(): with a running dispatcher,
+    /// Window.Show() defers its layout pass onto the queue behind the callback
+    /// that called it, so the window reports 0x0 and an empty tree no matter how
+    /// the queue is pumped from inside that callback.
     /// </remarks>
-    private static System.Windows.Threading.Dispatcher UiDispatcher()
+    private static void EnsureUiThread()
     {
         lock (UiGate)
         {
-            if (_uiDispatcher is not null) return _uiDispatcher;
+            if (_uiWork is not null) return;
 
+            var work = new System.Collections.Concurrent.BlockingCollection<Action>();
             using var ready = new ManualResetEventSlim();
             Exception? startupFailure = null;
+
             var thread = new Thread(() =>
             {
                 try
                 {
                     var app = new App();
                     app.InitializeComponent();
-                    _uiDispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher;
+
+                    // App.xaml declares OnMainWindowClose. The first window shown
+                    // becomes MainWindow, so closing it shuts the Application down
+                    // and every later window then builds no visual tree at all.
+                    app.ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown;
                 }
                 catch (Exception exception) { startupFailure = exception; }
                 finally { ready.Set(); }
 
-                if (startupFailure is null) System.Windows.Threading.Dispatcher.Run();
+                if (startupFailure is not null) return;
+                foreach (var item in work.GetConsumingEnumerable()) item();
             }) { IsBackground = true, Name = "SherpaManager.Tests UI" };
             thread.SetApartmentState(ApartmentState.STA);
             thread.Start();
@@ -2189,16 +2429,28 @@ internal static class Program
                 throw new TimeoutException("The WPF test host did not start.");
             if (startupFailure is not null)
                 throw new InvalidOperationException("The WPF test host failed to start.", startupFailure);
-            return _uiDispatcher!;
+
+            _uiWork = work;
         }
     }
 
     private static void OnUiThread(Action action)
     {
-        var completed = UiDispatcher().InvokeAsync(action).Task;
-        if (!completed.Wait(TimeSpan.FromSeconds(60)))
+        EnsureUiThread();
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _uiWork!.Add(() =>
+        {
+            try
+            {
+                action();
+                completed.TrySetResult();
+            }
+            catch (Exception exception) { completed.TrySetException(exception); }
+        });
+
+        if (!completed.Task.Wait(TimeSpan.FromSeconds(60)))
             throw new TimeoutException("A UI test operation timed out.");
-        if (completed.IsFaulted) throw completed.Exception!.InnerException ?? completed.Exception;
+        completed.Task.GetAwaiter().GetResult();
     }
 
     /// <summary>Renders a window off-screen and returns every text node in it.</summary>
@@ -2231,6 +2483,10 @@ internal static class Program
                 System.Diagnostics.PresentationTraceSources.DataBindingSource.Listeners.Remove(listener);
             }
         });
+
+        if (rendered.Count == 0)
+            throw new InvalidOperationException(
+                "The window produced no visual tree at all, which means it never laid out rather than that its content was wrong.");
         return rendered;
     }
 
@@ -2250,6 +2506,42 @@ internal static class Program
         public override void WriteLine(string? message)
         {
             if (!string.IsNullOrWhiteSpace(message)) errors.Add(message);
+        }
+    }
+
+    private sealed class FakeAudioDeviceService(List<string> events) : IAudioDeviceService
+    {
+        public List<AudioDevice> Devices { get; } = [];
+        public string? DefaultId { get; set; }
+        public int SetCalls { get; set; }
+        public bool ThrowOnSet { get; set; }
+        public bool Available { get; set; } = true;
+
+        public bool IsAvailable => Available;
+
+        /// <summary>Adds a device once enumeration has been called this many times.</summary>
+        public (int AfterQueries, AudioDevice Device)? AppearAfterQueries { get; set; }
+
+        private int _queries;
+
+        public IReadOnlyList<AudioDevice> GetOutputDevices()
+        {
+            _queries++;
+            if (AppearAfterQueries is { } pending && _queries >= pending.AfterQueries &&
+                Devices.All(device => device.Id != pending.Device.Id))
+                Devices.Add(pending.Device);
+            return Devices;
+        }
+
+        public AudioDevice? GetDefaultOutputDevice() =>
+            Devices.FirstOrDefault(device => device.Id == DefaultId);
+
+        public void SetDefaultOutputDevice(string deviceId)
+        {
+            SetCalls++;
+            if (ThrowOnSet) throw new InvalidOperationException("simulated audio failure");
+            events.Add("audio:set:" + deviceId);
+            DefaultId = deviceId;
         }
     }
 

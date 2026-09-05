@@ -8,6 +8,8 @@ public sealed class SwitchProfile : ObservableObject
     private string _description = string.Empty;
     private string _accentColor = "#6C57FF";
     private string _hotkey = string.Empty;
+    private string _audioOutputDeviceId = string.Empty;
+    private string _audioOutputDeviceName = string.Empty;
     private DisplaySnapshot? _display;
     private DateTime? _lastActivatedUtc;
     private NvidiaSurroundMode _nvidiaSurroundMode;
@@ -17,6 +19,23 @@ public sealed class SwitchProfile : ObservableObject
     public string Description { get => _description; set => SetProperty(ref _description, value); }
     public string AccentColor { get => _accentColor; set => SetProperty(ref _accentColor, value); }
     public string Hotkey { get => _hotkey; set => SetProperty(ref _hotkey, value); }
+
+    /// <summary>Windows endpoint id to make the default output, or empty to leave audio alone.</summary>
+    public string AudioOutputDeviceId
+    {
+        get => _audioOutputDeviceId;
+        set => SetProperty(ref _audioOutputDeviceId, value);
+    }
+
+    /// <summary>
+    /// The endpoint name as it was when chosen. Kept so a profile can still name
+    /// the device it wants when that device is currently unplugged.
+    /// </summary>
+    public string AudioOutputDeviceName
+    {
+        get => _audioOutputDeviceName;
+        set => SetProperty(ref _audioOutputDeviceName, value);
+    }
     public DisplaySnapshot? Display { get => _display; set { if (SetProperty(ref _display, value)) OnPropertyChanged(nameof(DisplaySummary)); } }
     public DateTime? LastActivatedUtc { get => _lastActivatedUtc; set => SetProperty(ref _lastActivatedUtc, value); }
     public NvidiaSurroundMode NvidiaSurroundMode { get => _nvidiaSurroundMode; set => SetProperty(ref _nvidiaSurroundMode, value); }
@@ -31,6 +50,8 @@ public sealed class SwitchProfile : ObservableObject
         Description = Description,
         AccentColor = AccentColor,
         NvidiaSurroundMode = NvidiaSurroundMode,
+        AudioOutputDeviceId = AudioOutputDeviceId,
+        AudioOutputDeviceName = AudioOutputDeviceName,
         Display = Display is null ? null : new DisplaySnapshot
         {
             CapturedAtUtc = Display.CapturedAtUtc,

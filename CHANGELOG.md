@@ -15,6 +15,15 @@ Quality-of-life release.
 
 ### Added
 
+- Per-profile audio output. A profile can make a chosen playback device the
+  Windows default when it activates, covering both ordinary playback and
+  communications. The switch happens before applications start, because most sim
+  and voice applications read the default output once at launch and never look
+  again. When the profile also changes displays, Sherpa waits up to 15 seconds
+  for the chosen device to appear: a monitor's audio endpoint does not exist
+  until Windows has finished enabling that monitor, and it arrives some time
+  after the display itself is usable. A device that is not connected, or a switch
+  Windows refuses, is reported as a warning and never fails the profile switch.
 - **View layout** in the profile editor draws the monitors a profile will
   arrange, to scale and in their real positions, with the primary display
   highlighted and each panel labelled with its resolution, refresh rate, and
@@ -25,6 +34,11 @@ Quality-of-life release.
 
 ### Fixed
 
+- Per-profile audio output had no effect. The audio service was created after the
+  services that consume it, so both the activation and the preview received null
+  and skipped the step silently. Activation now records whether an audio device
+  was requested and whether the service was available, so a skipped step is
+  visible in diagnostics instead of looking like a switch that did not work.
 - Dialogs use the dark title bar instead of the Windows default white one. Only
   the main window opted in, so every dialog Sherpa opened had a white caption
   above dark content.
