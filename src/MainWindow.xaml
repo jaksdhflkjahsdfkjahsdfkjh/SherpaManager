@@ -234,10 +234,16 @@
                     <Grid Margin="0,0,0,10">
                         <StackPanel>
                             <TextBlock Text="APPLICATIONS" FontSize="17" FontWeight="SemiBold"/>
-                            <TextBlock Text="Applications start in the order listed. Each one waits for the previous to start, so ordering the list is all that is needed."
-                                       Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,4,0,0"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                <TextBlock Text="Applications start in the order listed. Each one waits for the previous to start."
+                                           Foreground="{StaticResource MutedTextBrush}" FontSize="11"/>
+                                <TextBlock x:Name="ApplicationIssuesText" FontSize="11" Margin="10,0,0,0"
+                                           Foreground="{StaticResource CautionBrush}"/>
+                            </StackPanel>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom">
+                            <Button x:Name="DragLockButton" Width="36" Padding="0,9" Margin="0,0,6,0"
+                                    Style="{StaticResource DragLockButtonStyle}" Click="ToggleDragReorder_Click"/>
                             <Button Content="↑" Width="36" Padding="0,9" ToolTip="Move up" Click="MoveApplicationUp_Click" Margin="0,0,6,0"/>
                             <Button Content="↓" Width="36" Padding="0,9" ToolTip="Move down" Click="MoveApplicationDown_Click" Margin="0,0,8,0"/>
                             <Button Content="Browse…" Click="BrowseApplication_Click" Margin="0,0,8,0"/>
@@ -247,8 +253,12 @@
                     </Grid>
 
                     <DataGrid x:Name="ApplicationsGrid" ItemsSource="{Binding Applications}" AutoGenerateColumns="False" CanUserAddRows="False"
-                              AlternationCount="2" LoadingRow="ApplicationsGrid_LoadingRow"
-                              HeadersVisibility="All" RowHeaderWidth="30"
+                              AlternationCount="2" HeadersVisibility="All" RowHeaderWidth="30"
+                              CanUserSortColumns="False" AllowDrop="True"
+                              PreviewMouseLeftButtonDown="ApplicationsGrid_PreviewMouseLeftButtonDown"
+                              PreviewMouseMove="ApplicationsGrid_PreviewMouseMove"
+                              DragOver="ApplicationsGrid_DragOver" Drop="ApplicationsGrid_Drop"
+                              RowHeaderStyle="{StaticResource ApplicationRowHeaderStyle}"
                               SelectionMode="Single" MinHeight="210" MaxHeight="350" RowEditEnding="ApplicationsGrid_RowEditEnding">
                         <DataGrid.Columns>
                             <DataGridCheckBoxColumn Header="Use" Binding="{Binding Enabled}" Width="48"

@@ -136,7 +136,12 @@ Windows offers no supported way to change the default audio device. Sherpa uses 
 
 ## Launch order and readiness
 
-Applications start in the order they are listed, and the grid numbers them so that order is visible. Each one waits for the previous to start before it begins, so putting an application lower in the list is all that "start it after that one" requires. Use the arrow buttons to reorder.
+Entries that will not work are marked in the editor: the row number is replaced by a warning symbol, with a tooltip explaining why — an executable or shortcut that cannot be found, a working directory that does not exist, or an entry that starts the same thing as an earlier one and would be skipped during a switch. A flagged entry takes no number, so the numbers that remain read as the sequence that will actually run. The count appears beside the **Applications** heading. These are the same checks the activation preview runs, so a problem shows up while you are editing rather than only when you switch.
+
+
+Applications start in the order they are listed, and the grid numbers them so that order is visible. Each one waits for the previous to start before it begins, so putting an application lower in the list is all that "start it after that one" requires.
+
+Reorder with the arrow buttons, or by dragging a row. Dragging is locked by default so that a stray drag while editing cannot silently change the order; the padlock button beside the arrows unlocks it, and the choice is remembered; it turns and changes colour when reordering is unlocked. The columns do not sort, because sorting the view would have shown an order that is not the order things start in.
 
 **Settings → Before starting the next app, wait for** controls how much waiting happens:
 

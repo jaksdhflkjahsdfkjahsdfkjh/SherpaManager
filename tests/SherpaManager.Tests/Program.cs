@@ -85,14 +85,19 @@ internal static class Program
             ("Display layouts survive layouts that cannot be drawn", TestDisplayLayoutEdgeCasesAsync),
             ("The display layout window renders every monitor", TestDisplayLayoutWindowRendersAsync),
             ("Application rows are numbered", TestApplicationRowNumbersRenderAsync),
-            ("Application rows are numbered when the profile arrives late", TestRowNumbersWithLateItemsAsync),
-            ("Row numbers survive the real profile binding chain", TestRowNumbersThroughProfileBindingAsync),
+            ("The launch order skips entries that will not start", TestOrderLabelsAsync),
+            ("Row headers show the order, and a warning instead of it", TestRowHeaderStyleRendersAsync),
+            ("Editing the list reflags and renumbers it without being asked", TestIssueWatcherAsync),
+            ("The lock button shows the state dragging is actually in", TestDragLockButtonAsync),
             ("The row number column is present when a profile has no applications", TestRowHeaderOnEmptyGridAsync),
             ("The row number column is present on the first profile selection", TestRowHeaderOnFirstSelectionAsync),
             ("A switch is recorded exactly as it was reported", TestActivationRecordedAsync),
             ("A cancelled switch is still recorded", TestCancelledActivationRecordedAsync),
             ("The switch history window renders a recorded switch", TestActivationHistoryWindowRendersAsync),
-            ("Switches are numbered and labelled in the history", TestActivationHistoryLabellingAsync)
+            ("Switches are numbered and labelled in the history", TestActivationHistoryLabellingAsync),
+            ("Unusable applications are flagged in the editor", TestApplicationIssuesAsync),
+            ("Editor flags match what the activation preview reports", TestApplicationIssuesMatchPreviewAsync),
+            ("Tooltips use the Sherpa theme", TestToolTipThemedAsync)
         };
 
         var selectedTests = tests.ToList();
@@ -2524,6 +2529,369 @@ internal static class Program
         Assert(recorded.Steps.Count > 0, "A cancelled switch should still have steps.");
     }
 
+    private static Task TestApplicationIssuesAsync()
+    {
+        using var directory = new TemporaryDirectory();
+        var processes = new FakeProcessService();
+        processes.ThrowOnResolvePath = @"C:\sim\missing.exe";
+
+        var good = new LaunchApplication { Name = "Crew Chief", Path = @"C:\sim\crew.exe" };
+        var missing = new LaunchApplication { Name = "Missing", Path = @"C:\sim\missing.exe" };
+        var duplicate = new LaunchApplication { Name = "Crew Chief copy", Path = @"C:\sim\crew.exe" };
+        var badDirectory = new LaunchApplication
+        {
+            Name = "Bad directory",
+            Path = @"C:\sim\ok.exe",
+            WorkingDirectory = Path.Combine(directory.Path, "absent")
+        };
+        var profile = new SwitchProfile
+        {
+            Name = "iRacing",
+            Applications = { good, missing, duplicate, badDirectory }
+        };
+
+        var issues = ApplicationIssueScanner.Scan(profile, processes);
+
+        Assert(!issues.ContainsKey(good.Id), "A usable entry should not be flagged.");
+        Assert(issues[missing.Id].Kind == ApplicationIssueKind.NotFound,
+            $"Expected NotFound, got {issues[missing.Id].Kind}.");
+        Assert(issues[badDirectory.Id].Kind == ApplicationIssueKind.WorkingDirectoryMissing,
+            $"Expected WorkingDirectoryMissing, got {issues[badDirectory.Id].Kind}.");
+
+        // The first entry keeps the slot; the later one is what gets skipped.
+        Assert(issues[duplicate.Id].Kind == ApplicationIssueKind.Duplicate,
+            $"Expected Duplicate, got {issues[duplicate.Id].Kind}.");
+        Assert(issues[duplicate.Id].Message.Contains("Crew Chief", StringComparison.Ordinal),
+            $"The duplicate should name what it collides with; got '{issues[duplicate.Id].Message}'.");
+
+        // A disabled spare is a deliberate choice, not a collision: it is never
+        // launched, so it cannot conflict with anything.
+        duplicate.Enabled = false;
+        var withDisabled = ApplicationIssueScanner.Scan(profile, processes);
+        Assert(!withDisabled.ContainsKey(duplicate.Id),
+            "A disabled entry must not be reported as a duplicate.");
+
+        // A broken path still matters when disabled, because enabling it later
+        // would not re-announce the problem.
+        missing.Enabled = false;
+        Assert(ApplicationIssueScanner.Scan(profile, processes)[missing.Id].Kind == ApplicationIssueKind.NotFound,
+            "A disabled entry with a broken path should still be flagged.");
+
+        Assert(ApplicationIssueScanner.Scan(new SwitchProfile { Name = "Empty" }, processes).Count == 0,
+            "A profile with no applications has nothing to flag.");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The flags and the launch order used to be refreshed by each editor action
+    /// calling the scanner, and actions added later forgot to. This is the
+    /// regression: nothing here asks for a rescan.
+    /// </summary>
+    private static Task TestIssueWatcherAsync()
+    {
+        var processes = new FakeProcessService();
+        var crew = new LaunchApplication { Name = "Crew Chief", Path = @"C:\sim\crew.exe" };
+        var iracing = new LaunchApplication { Name = "iRacing", Path = @"C:\sim\iracing.exe" };
+        var profile = new SwitchProfile { Name = "iRacing", Applications = { crew, iracing } };
+
+        var counts = new List<int>();
+        using var watcher = new ApplicationIssueWatcher(processes, counts.Add);
+        watcher.Watch(profile);
+
+        Assert(counts is [0], $"Watching should scan once and find nothing; got [{string.Join(", ", counts)}].");
+        Assert(crew.OrderLabel == "1" && iracing.OrderLabel == "2", "The initial scan should have numbered the list.");
+
+        // Browsing for a file adds an entry and then sets its path. Neither step
+        // told the watcher anything.
+        var added = new LaunchApplication { Name = "New application" };
+        profile.Applications.Add(added);
+        Assert(added.OrderLabel == "3", $"An added entry should take the next number; got '{added.OrderLabel}'.");
+
+        added.Path = @"C:\sim\crew.exe";
+        Assert(added.HasIssue, "An entry that duplicates another should have been flagged as it was edited.");
+        Assert(added.OrderLabel.Length == 0, "A flagged entry should give up its number.");
+        Assert(counts[^1] == 1, $"The count should have reached the heading; got {counts[^1]}.");
+
+        // A duplicate that is switched off is a deliberate spare, not a problem.
+        added.Enabled = false;
+        Assert(!added.HasIssue, "Disabling a duplicate should clear its flag.");
+        Assert(added.OrderLabel == "3", $"Clearing the flag should restore the number; got '{added.OrderLabel}'.");
+
+        // The up/down buttons and dragging both just move the item.
+        profile.Applications.Move(2, 0);
+        Assert(added.OrderLabel == "1" && crew.OrderLabel == "2",
+            $"Moving should renumber; got '{added.OrderLabel}' and '{crew.OrderLabel}'.");
+
+        profile.Applications.Remove(added);
+        Assert(crew.OrderLabel == "1" && iracing.OrderLabel == "2", "Removing should renumber the rest.");
+
+        // Watching something else must stop the old profile driving the heading.
+        var before = counts.Count;
+        watcher.Watch(null);
+        crew.Path = @"C:\sim\other.exe";
+        Assert(counts.Count == before + 1 && counts[^1] == 0,
+            "Releasing the profile should report an empty heading and then stay quiet.");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The open and closed padlocks are nearly identical at button size, so the
+    /// state has to be legible in more than the glyph, and it has to follow the
+    /// setting rather than be assigned when the button is clicked.
+    /// </summary>
+    private static Task TestDragLockButtonAsync()
+    {
+        var settings = new AppSettings();
+        string lockedGlyph = string.Empty, unlockedGlyph = string.Empty;
+        System.Windows.Media.Color lockedColour = default, unlockedColour = default;
+        string lockedTip = string.Empty, unlockedTip = string.Empty;
+        var missingStyle = false;
+
+        OnUiThread(() =>
+        {
+            var style = System.Windows.Application.Current?.TryFindResource("DragLockButtonStyle")
+                as System.Windows.Style;
+            if (style is null) { missingStyle = true; return; }
+
+            var button = new System.Windows.Controls.Button { Style = style, DataContext = settings };
+            var window = new Window
+            {
+                Width = 200,
+                Height = 120,
+                Content = button,
+                ShowActivated = false,
+                Opacity = 0,
+                WindowStartupLocation = System.Windows.WindowStartupLocation.Manual,
+                Left = -32000,
+                Top = -32000
+            };
+            try
+            {
+                window.Show();
+                window.UpdateLayout();
+
+                lockedGlyph = button.Content as string ?? string.Empty;
+                lockedColour = ((System.Windows.Media.SolidColorBrush)button.Foreground).Color;
+                lockedTip = button.ToolTip as string ?? string.Empty;
+
+                // Only the setting changes. Nothing touches the button.
+                settings.AllowApplicationDragReorder = true;
+                window.UpdateLayout();
+
+                unlockedGlyph = button.Content as string ?? string.Empty;
+                unlockedColour = ((System.Windows.Media.SolidColorBrush)button.Foreground).Color;
+                unlockedTip = button.ToolTip as string ?? string.Empty;
+            }
+            finally { window.Close(); }
+        });
+
+        Assert(!missingStyle, "DragLockButtonStyle is not in App.xaml.");
+        Assert(lockedGlyph.Length > 0 && unlockedGlyph.Length > 0, "The button should carry a glyph in both states.");
+        Assert(lockedGlyph != unlockedGlyph,
+            $"Unlocking should change the glyph; it stayed '{lockedGlyph}'.");
+        Assert(lockedColour != unlockedColour,
+            $"The two states should differ in colour as well as glyph; both were {lockedColour}.");
+        Assert(lockedTip != unlockedTip, "The tooltip should say which state the button is in.");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Renders the shipped row header style, not a copy of it: a retemplated
+    /// header with a DataTrigger fails silently when it fails, so what each header
+    /// really shows has to be read back out of App.xaml's own template.
+    /// </summary>
+    private static Task TestRowHeaderStyleRendersAsync()
+    {
+        var processes = new FakeProcessService();
+        processes.ThrowOnResolvePath = @"C:\sim\missing.exe";
+        var profile = new SwitchProfile
+        {
+            Name = "iRacing",
+            Applications =
+            {
+                new LaunchApplication { Name = "MOZA Pit House", Path = @"C:\sim\moza.exe" },
+                new LaunchApplication { Name = "Missing", Path = @"C:\sim\missing.exe" },
+                new LaunchApplication { Name = "Crew Chief", Path = @"C:\sim\crew.exe" }
+            }
+        };
+        ApplicationIssueScanner.Apply(profile, processes);
+
+        // What each row header actually shows: its number, whether the warning is
+        // visible, and the reason behind it.
+        var shown = new List<(string Order, bool Warning, string ToolTip)>();
+        var missingStyle = false;
+
+        OnUiThread(() =>
+        {
+            var style = System.Windows.Application.Current?.TryFindResource("ApplicationRowHeaderStyle")
+                as System.Windows.Style;
+            if (style is null) { missingStyle = true; return; }
+
+            var grid = new System.Windows.Controls.DataGrid
+            {
+                AutoGenerateColumns = false,
+                CanUserAddRows = false,
+                CanUserSortColumns = false,
+                HeadersVisibility = System.Windows.Controls.DataGridHeadersVisibility.All,
+                RowHeaderWidth = 30,
+                RowHeaderStyle = style,
+                ItemsSource = profile.Applications
+            };
+            grid.Columns.Add(new System.Windows.Controls.DataGridTextColumn
+            {
+                Header = "Name",
+                Binding = new System.Windows.Data.Binding("Name")
+            });
+
+            var window = new Window
+            {
+                Width = 520,
+                Height = 300,
+                Content = grid,
+                ShowActivated = false,
+                Opacity = 0,
+                WindowStartupLocation = System.Windows.WindowStartupLocation.Manual,
+                Left = -32000,
+                Top = -32000
+            };
+            try
+            {
+                window.Show();
+                window.UpdateLayout();
+                grid.UpdateLayout();
+
+                foreach (var app in profile.Applications)
+                {
+                    if (grid.ItemContainerGenerator.ContainerFromItem(app) is not System.Windows.Controls.DataGridRow row)
+                        continue;
+                    if (FindVisualChild<System.Windows.Controls.Primitives.DataGridRowHeader>(row) is not { } header)
+                        continue;
+
+                    header.ApplyTemplate();
+                    var order = (System.Windows.Controls.TextBlock)header.Template.FindName("Order", header);
+                    var warning = (System.Windows.Controls.TextBlock)header.Template.FindName("Warning", header);
+                    var cell = (System.Windows.Controls.Border)header.Template.FindName("HeaderCell", header);
+                    shown.Add((
+                        order.Visibility == System.Windows.Visibility.Visible ? order.Text : string.Empty,
+                        warning.Visibility == System.Windows.Visibility.Visible,
+                        cell.ToolTip as string ?? string.Empty));
+                }
+            }
+            finally { window.Close(); }
+        });
+
+        Assert(!missingStyle,
+            "ApplicationRowHeaderStyle is not in App.xaml; the grid would fall back to the Windows header.");
+        Assert(shown.Count == 3, $"Expected three row headers, found {shown.Count}.");
+
+        Assert(shown[0] == ("1", false, string.Empty), $"The first header showed {shown[0]}.");
+        Assert(shown[2] == ("2", false, string.Empty), $"The third header showed {shown[2]}.");
+
+        // The entry that will not start shows why, in place of a number.
+        Assert(shown[1].Order.Length == 0, $"A flagged entry should show no number; it showed '{shown[1].Order}'.");
+        Assert(shown[1].Warning, "A flagged entry should show the warning marker.");
+        Assert(shown[1].ToolTip.Length > 0, "The warning marker needs the reason in its tooltip.");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The row header shows the launch order, and an entry that will not start
+    /// takes no number, so what remains reads as the sequence that will run.
+    /// </summary>
+    private static Task TestOrderLabelsAsync()
+    {
+        var processes = new FakeProcessService();
+        processes.ThrowOnResolvePath = @"C:\sim\missing.exe";
+
+        var first = new LaunchApplication { Name = "MOZA Pit House", Path = @"C:\sim\moza.exe" };
+        var broken = new LaunchApplication { Name = "Missing", Path = @"C:\sim\missing.exe" };
+        var second = new LaunchApplication { Name = "Crew Chief", Path = @"C:\sim\crew.exe" };
+        var duplicate = new LaunchApplication { Name = "Crew Chief copy", Path = @"C:\sim\crew.exe" };
+        var third = new LaunchApplication { Name = "iRacing", Path = @"C:\sim\iracing.exe" };
+        var profile = new SwitchProfile
+        {
+            Name = "iRacing",
+            Applications = { first, broken, second, duplicate, third }
+        };
+
+        var count = ApplicationIssueScanner.Apply(profile, processes);
+        Assert(count == 2, $"Expected two flagged entries, got {count}.");
+
+        Assert(first.OrderLabel == "1", $"Expected 1, got '{first.OrderLabel}'.");
+        Assert(broken.OrderLabel.Length == 0, "A broken entry should carry no number.");
+        Assert(second.OrderLabel == "2", $"Expected 2, got '{second.OrderLabel}'.");
+        Assert(duplicate.OrderLabel.Length == 0, "A duplicate entry should carry no number.");
+        Assert(third.OrderLabel == "3", $"Expected 3, got '{third.OrderLabel}'.");
+
+        // Fixing the broken entry renumbers everything after it.
+        processes.ThrowOnResolvePath = null;
+        Assert(ApplicationIssueScanner.Apply(profile, processes) == 1, "Only the duplicate should stay flagged.");
+        Assert(broken.OrderLabel == "2" && second.OrderLabel == "3" && third.OrderLabel == "4",
+            $"Renumbering failed: {broken.OrderLabel}, {second.OrderLabel}, {third.OrderLabel}.");
+
+        // Reordering the list reorders the numbers, which is what dragging does.
+        profile.Applications.Move(4, 0);
+        ApplicationIssueScanner.Apply(profile, processes);
+        Assert(third.OrderLabel == "1", $"The moved entry should now be first, got '{third.OrderLabel}'.");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Tooltips are drawn from WPF's own default style rather than the window's, so
+    /// they stay light in a dark application unless an implicit style overrides
+    /// them. They are popups in their own window, so this checks the style is
+    /// applied rather than photographing one.
+    /// </summary>
+    private static Task TestToolTipThemedAsync()
+    {
+        System.Windows.Media.Color background = default;
+        System.Windows.Media.Color foreground = default;
+        var templated = false;
+        double maxWidth = 0;
+
+        OnUiThread(() =>
+        {
+            var tip = new System.Windows.Controls.ToolTip { Content = "Starts the same thing as Crew Chief." };
+            tip.ApplyTemplate();
+
+            background = ((System.Windows.Media.SolidColorBrush)tip.Background).Color;
+            foreground = ((System.Windows.Media.SolidColorBrush)tip.Foreground).Color;
+            templated = tip.Template is not null;
+            maxWidth = tip.MaxWidth;
+        });
+
+        var panel = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#1B1A22");
+        var text = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#F0EFF5");
+
+        Assert(background == panel, $"Tooltips should use the panel colour; got {background}.");
+        Assert(foreground == text, $"Tooltips should use the light text colour; got {foreground}.");
+        Assert(templated, "The tooltip should use Sherpa's template, not the Windows default.");
+        Assert(maxWidth is > 0 and <= 600,
+            $"Tooltips need a width bound so a long path does not stretch off screen; got {maxWidth}.");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestApplicationIssuesMatchPreviewAsync()
+    {
+        var (document, target, processes, displays) = PreviewFixture();
+        processes.ThrowOnResolvePath = @"C:\sim\missing.exe";
+        target.Applications.Add(new LaunchApplication { Name = "Good", Path = @"C:\sim\good.exe" });
+        target.Applications.Add(new LaunchApplication { Name = "Missing", Path = @"C:\sim\missing.exe" });
+        target.Applications.Add(new LaunchApplication { Name = "Copy", Path = @"C:\sim\good.exe" });
+
+        var flagged = ApplicationIssueScanner.Scan(target, processes);
+        var preview = ItemsIn(new ActivationPreflightService(displays, processes).Build(document, target),
+            "Applications in iRacing");
+
+        Assert(flagged.Count == 2, $"Expected two flagged entries, got {flagged.Count}.");
+        Assert(Mentions(preview, PreflightSeverity.Problem, "Missing", "cannot be found"),
+            "The preview should report the missing executable.");
+        Assert(Mentions(preview, PreflightSeverity.Info, "Copy", "duplicate"),
+            "The preview should report the duplicate.");
+        return Task.CompletedTask;
+    }
+
     private static async Task TestActivationHistoryLabellingAsync()
     {
         var processes = new FakeProcessService();
@@ -2702,163 +3070,6 @@ internal static class Program
 
         Assert(rendered.Contains("\u2116"),
             $"The row number column disappeared on an empty grid. Rendered: {string.Join(" | ", rendered)}");
-        return Task.CompletedTask;
-    }
-
-    private static Task TestRowNumbersThroughProfileBindingAsync()
-    {
-        var empty = new SwitchProfile { Name = "Work" };
-        var populated = new SwitchProfile { Name = "iRacing" };
-        foreach (var name in new[] { "FEEL_VR", "Crew Chief", "iRacing" })
-            populated.Applications.Add(new LaunchApplication { Name = name, Path = $@"C:\sim\{name}.exe" });
-
-        var rendered = new List<string>();
-        var startupRendered = new List<string>();
-
-        OnUiThread(() =>
-        {
-            var profiles = new System.Windows.Controls.ListBox
-            {
-                ItemsSource = new[] { empty, populated },
-                DisplayMemberPath = "Name"
-            };
-
-            var grid = new System.Windows.Controls.DataGrid
-            {
-                AutoGenerateColumns = false,
-                CanUserAddRows = false,
-                HeadersVisibility = System.Windows.Controls.DataGridHeadersVisibility.All,
-                RowHeaderWidth = 30,
-                AlternationCount = 2
-            };
-            grid.SetBinding(System.Windows.Controls.ItemsControl.ItemsSourceProperty,
-                new System.Windows.Data.Binding("Applications"));
-            grid.Columns.Add(new System.Windows.Controls.DataGridTextColumn
-            {
-                Header = "Name",
-                Binding = new System.Windows.Data.Binding("Name")
-            });
-            grid.LoadingRow += (_, e) => e.Row.Header = (e.Row.GetIndex() + 1).ToString();
-            grid.ItemContainerGenerator.StatusChanged += (_, _) =>
-            {
-                if (grid.ItemContainerGenerator.Status !=
-                    System.Windows.Controls.Primitives.GeneratorStatus.ContainersGenerated) return;
-                for (var index = 0; index < grid.Items.Count; index++)
-                    if (grid.ItemContainerGenerator.ContainerFromIndex(index) is System.Windows.Controls.DataGridRow row)
-                        row.Header = (index + 1).ToString();
-            };
-
-            // The grid's DataContext comes from the profile list's selection, and
-            // the whole page lives inside a TabControl.
-            var page = new System.Windows.Controls.Grid();
-            page.SetBinding(System.Windows.FrameworkElement.DataContextProperty,
-                new System.Windows.Data.Binding("SelectedItem") { Source = profiles });
-            page.Children.Add(grid);
-
-            var tabs = new System.Windows.Controls.TabControl { SelectedIndex = 0 };
-            tabs.Items.Add(new System.Windows.Controls.TabItem { Content = page });
-
-            var root = new System.Windows.Controls.DockPanel();
-            System.Windows.Controls.DockPanel.SetDock(profiles, System.Windows.Controls.Dock.Left);
-            profiles.Width = 140;
-            root.Children.Add(profiles);
-            root.Children.Add(tabs);
-
-            var window = new Window
-            {
-                Width = 700,
-                Height = 420,
-                Content = root,
-                ShowActivated = false,
-                Opacity = 0,
-                WindowStartupLocation = System.Windows.WindowStartupLocation.Manual,
-                Left = -32000,
-                Top = -32000
-            };
-            try
-            {
-                window.Show();
-                window.UpdateLayout();
-
-                // As MainWindow_Loaded does: select a profile once the window is up.
-                profiles.SelectedItem = populated;
-                window.UpdateLayout();
-                CollectText(window, startupRendered);
-
-                // Then switch away and back, which is what made the numbers appear.
-                profiles.SelectedItem = empty;
-                window.UpdateLayout();
-                profiles.SelectedItem = populated;
-                window.UpdateLayout();
-                CollectText(window, rendered);
-            }
-            finally { window.Close(); }
-        });
-
-        foreach (var number in new[] { "1", "2", "3" })
-            Assert(startupRendered.Contains(number),
-                $"Row number {number} was missing on the first selection. Rendered: {string.Join(" | ", startupRendered)}");
-        foreach (var number in new[] { "1", "2", "3" })
-            Assert(rendered.Contains(number),
-                $"Row number {number} was missing after switching profiles. Rendered: {string.Join(" | ", rendered)}");
-        return Task.CompletedTask;
-    }
-
-    private static Task TestRowNumbersWithLateItemsAsync()
-    {
-        var rendered = new List<string>();
-        OnUiThread(() =>
-        {
-            var grid = new System.Windows.Controls.DataGrid
-            {
-                AutoGenerateColumns = false,
-                CanUserAddRows = false,
-                HeadersVisibility = System.Windows.Controls.DataGridHeadersVisibility.All,
-                RowHeaderWidth = 30
-            };
-            grid.Columns.Add(new System.Windows.Controls.DataGridTextColumn
-            {
-                Header = "Value",
-                Binding = new System.Windows.Data.Binding(".")
-            });
-            grid.LoadingRow += (_, e) => e.Row.Header = (e.Row.GetIndex() + 1).ToString();
-            grid.ItemContainerGenerator.StatusChanged += (_, _) =>
-            {
-                if (grid.ItemContainerGenerator.Status !=
-                    System.Windows.Controls.Primitives.GeneratorStatus.ContainersGenerated) return;
-                for (var index = 0; index < grid.Items.Count; index++)
-                    if (grid.ItemContainerGenerator.ContainerFromIndex(index) is System.Windows.Controls.DataGridRow row)
-                        row.Header = (index + 1).ToString();
-            };
-
-            var window = new Window
-            {
-                Width = 420,
-                Height = 320,
-                Content = grid,
-                ShowActivated = false,
-                Opacity = 0,
-                WindowStartupLocation = System.Windows.WindowStartupLocation.Manual,
-                Left = -32000,
-                Top = -32000
-            };
-            try
-            {
-                window.Show();
-                window.UpdateLayout();
-
-                // The profile, and therefore the applications, arrive now.
-                grid.ItemsSource = new[] { "first", "second", "third" };
-                window.UpdateLayout();
-
-                CollectText(window, rendered);
-            }
-            finally { window.Close(); }
-        });
-
-        foreach (var number in new[] { "1", "2", "3" })
-            Assert(rendered.Contains(number),
-                $"Row number {number} was missing when items arrived after the window opened. Rendered: {string.Join(" | ", rendered)}");
         return Task.CompletedTask;
     }
 
@@ -3283,6 +3494,19 @@ internal static class Program
             throw new InvalidOperationException(
                 "The window produced no visual tree at all, which means it never laid out rather than that its content was wrong.");
         return rendered;
+    }
+
+    /// <summary>Finds the first child of a type in a rendered visual tree.</summary>
+    private static T? FindVisualChild<T>(System.Windows.DependencyObject root) where T : System.Windows.DependencyObject
+    {
+        var count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(root);
+        for (var index = 0; index < count; index++)
+        {
+            var child = System.Windows.Media.VisualTreeHelper.GetChild(root, index);
+            if (child is T match) return match;
+            if (FindVisualChild<T>(child) is { } deeper) return deeper;
+        }
+        return null;
     }
 
     private static void CollectText(System.Windows.DependencyObject root, List<string> into)

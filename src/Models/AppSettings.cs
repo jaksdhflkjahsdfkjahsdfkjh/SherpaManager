@@ -14,6 +14,7 @@ public sealed class AppSettings : ObservableObject
     private Guid? _activateProfileOnStartup;
     private int _displaySettleDelayMs = DefaultDisplaySettleDelayMs;
     private bool _showLaunchDelays;
+    private bool _allowApplicationDragReorder;
     private LaunchReadiness _launchReadiness = LaunchReadiness.ProcessRunning;
     private int _launchReadinessTimeoutMs = DefaultLaunchReadinessTimeoutMs;
 
@@ -51,6 +52,16 @@ public sealed class AppSettings : ObservableObject
     {
         get => _displaySettleDelayMs;
         set => SetProperty(ref _displaySettleDelayMs, Math.Clamp(value, 0, MaximumDisplaySettleDelayMs));
+    }
+
+    /// <summary>
+    /// Whether applications can be reordered by dragging them. Off by default so a
+    /// stray drag while editing cannot silently change the launch order.
+    /// </summary>
+    public bool AllowApplicationDragReorder
+    {
+        get => _allowApplicationDragReorder;
+        set => SetProperty(ref _allowApplicationDragReorder, value);
     }
 
     /// <summary>

@@ -1,6 +1,7 @@
 <Application x:Class="SherpaManager.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:system="clr-namespace:System;assembly=System.Runtime"
              ShutdownMode="OnMainWindowClose">
     <Application.Resources>
         <!-- GridSherpa dark theme tokens -->
@@ -47,6 +48,42 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <!-- Tooltips are drawn by WPF's own default style, not the window's, so a
+             dark application still shows light tooltips until it says otherwise.
+             Retemplated rather than recoloured: the default template supplies its
+             own border and drop shadow. -->
+        <Style TargetType="ToolTip">
+            <Setter Property="Background" Value="{StaticResource PanelBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="10,7"/>
+            <Setter Property="MaxWidth" Value="420"/>
+            <Setter Property="HasDropShadow" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToolTip">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6" Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter>
+                                <ContentPresenter.Resources>
+                                    <!-- A plain string would otherwise become a
+                                         non-wrapping TextBlock, and several of these
+                                         tooltips are a sentence or a full path. -->
+                                    <DataTemplate DataType="{x:Type system:String}">
+                                        <TextBlock Text="{Binding}" TextWrapping="Wrap"/>
+                                    </DataTemplate>
+                                </ContentPresenter.Resources>
+                            </ContentPresenter>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- Menus default to the Windows light chrome, which is unreadable against
              the app's light foreground. Retemplated rather than recoloured so no
              system highlight brush leaks through on hover. -->
@@ -391,32 +428,58 @@
             <Setter Property="SeparatorBrush" Value="#4A4856"/>
             <Setter Property="SeparatorVisibility" Value="Visible"/>
         </Style>
-        <!-- Row headers carry the launch order number. Retemplated because the
-             default header draws its own chrome and a current-row indicator, which
-             pushes the number off centre in a narrow column. -->
-        <Style TargetType="DataGridRowHeader">
+        <!-- The padlock beside the reorder arrows. Bound to the setting rather
+             than assigned when it is clicked, so it cannot show one state while
+             the grid is in the other, and the two states differ in colour as well
+             as glyph: the open and closed padlocks are nearly identical at this
+             size. -->
+        <Style x:Key="DragLockButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Content" Value="&#x1F512;"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}"/>
+            <Setter Property="ToolTip" Value="Rows cannot be dragged. Click to allow reordering by dragging."/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding AllowApplicationDragReorder}" Value="True">
+                    <Setter Property="Content" Value="&#x1F513;"/>
+                    <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
+                    <Setter Property="BorderBrush" Value="{StaticResource AccentSolidBrush}"/>
+                    <Setter Property="ToolTip" Value="Rows can be dragged to reorder them. Click to lock."/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- The applications grid draws the launch order in its row headers, and
+             a warning in place of the number for an entry that will not start.
+             Keyed rather than implicit so it applies to that grid alone, and kept
+             here so the shipped markup is what the render test exercises. -->
+        <Style x:Key="ApplicationRowHeaderStyle" TargetType="DataGridRowHeader">
             <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}"/>
             <Setter Property="FontSize" Value="11"/>
-            <!-- A floor, so the column cannot collapse if the grid measures before
-                 it has content to derive a width from. -->
             <Setter Property="MinWidth" Value="30"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="DataGridRowHeader">
-                        <Border Background="{StaticResource Surface2Brush}"
+                        <Border x:Name="HeaderCell" Background="{StaticResource Surface2Brush}"
                                 BorderBrush="{StaticResource BorderBrush}"
-                                BorderThickness="0,0,1,0"
-                                SnapsToDevicePixels="True">
-                            <TextBlock Text="{Binding RelativeSource={RelativeSource TemplatedParent}, Path=Content}"
-                                       Foreground="{TemplateBinding Foreground}"
-                                       FontSize="{TemplateBinding FontSize}"
-                                       HorizontalAlignment="Center" VerticalAlignment="Center"
-                                       TextAlignment="Center"/>
+                                BorderThickness="0,0,1,0" SnapsToDevicePixels="True">
+                            <Grid>
+                                <TextBlock x:Name="Order" Text="{Binding OrderLabel}"
+                                           Foreground="{TemplateBinding Foreground}"
+                                           FontSize="{TemplateBinding FontSize}"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="Warning" Text="&#x26A0;" FontSize="13"
+                                           Visibility="Collapsed"
+                                           Foreground="{StaticResource CautionBrush}"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Grid>
                         </Border>
                         <ControlTemplate.Triggers>
-                            <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=DataGridRow}}"
-                                         Value="True">
-                                <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+                            <!-- An entry that will not start has no place in the
+                                 order, so it shows why instead of a number. -->
+                            <DataTrigger Binding="{Binding HasIssue}" Value="True">
+                                <Setter TargetName="Order" Property="Visibility" Value="Collapsed"/>
+                                <Setter TargetName="Warning" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="HeaderCell" Property="ToolTip" Value="{Binding Issue}"/>
                             </DataTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>

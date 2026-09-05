@@ -15,6 +15,13 @@ Quality-of-life release.
 
 ### Added
 
+- Applications that will not work are flagged in the profile editor: the row
+  number is replaced by a warning marker, the reason is in its tooltip, and a
+  count appears beside the Applications heading. A flagged entry takes no
+  number, so the numbers that remain read as the sequence that will run. Covers an executable or shortcut that cannot be
+  resolved, a working directory that does not exist, and an entry that starts the
+  same thing as an earlier one and would be skipped. The same rules the
+  activation preview applies, so the two cannot disagree.
 - **Recent switches**, a button beside the status bar, shows what recent profile
   switches actually
   did: every step in the order it happened, the seconds it took, warnings
@@ -28,8 +35,27 @@ Quality-of-life release.
   finished with warnings, red when it failed. The newest carries a badge, and
   each shows both the clock time and how long ago it was.
 
+- Applications can be reordered by dragging a row, not only with the arrow
+  buttons. Dragging is locked by default so a stray drag while editing cannot
+  silently change the launch order; a padlock button beside the arrows unlocks
+  it, and the choice is remembered. The padlock is drawn from the setting it
+  controls, and its two states differ in colour as well as glyph, because an
+  open and a closed padlock look nearly the same at that size.
+
+### Fixed
+
+- The warning flags and the launch order now follow the application list as it
+  is edited. They were refreshed by each editor action asking for it, and two
+  actions never did: browsing for an executable left the new entry unnumbered
+  and unchecked for problems, and the up and down buttons left the numbering
+  stale. The list is watched instead, so an editor action added later cannot
+  forget.
+
 ### Changed
 
+- The application columns no longer sort when their headers are clicked.
+  Sorting the view showed an order that was not the order applications start
+  in, which made the launch order unreadable.
 - The status bar keeps showing the result of a switch. Window minimizing and
   application closing are watched for up to 45 seconds afterwards, and a
   successful outcome from one of those watchers used to replace the result with a
@@ -88,6 +114,10 @@ Quality-of-life release.
   and skipped the step silently. Activation now records whether an audio device
   was requested and whether the service was available, so a skipped step is
   visible in diagnostics instead of looking like a switch that did not work.
+- Tooltips follow the Sherpa theme instead of the Windows default light one.
+  They are drawn from WPF's own style rather than the window's, so a dark
+  application shows light tooltips until it says otherwise. Long text now wraps
+  within a bounded width rather than stretching across the screen.
 - Dialogs use the dark title bar instead of the Windows default white one. Only
   the main window opted in, so every dialog Sherpa opened had a white caption
   above dark content.

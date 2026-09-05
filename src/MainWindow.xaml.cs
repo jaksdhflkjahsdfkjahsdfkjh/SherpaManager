@@ -18,6 +18,7 @@ public partial class MainWindow : Window
     private readonly DiagnosticsService _diagnostics;
     private readonly DisplayConfigurationService _displays;
     private readonly ProcessService _processes;
+    private readonly ApplicationIssueWatcher _issues;
     private readonly ProfileActivationService _activator;
     private readonly ActivationPreflightService _preflight;
     private readonly GlobalHotkeyService _hotkeys;
@@ -59,6 +60,10 @@ public partial class MainWindow : Window
         _displays = new DisplayConfigurationService(diagnostics: _diagnostics);
         _processes = new ProcessService(diagnostics: _diagnostics);
         InitializeComponent();
+        _issues = new ApplicationIssueWatcher(_processes, count =>
+            ApplicationIssuesText.Text = count == 0
+                ? string.Empty
+                : $"{count} entr{(count == 1 ? "y needs" : "ies need")} attention");
         LaunchReadinessCombo.ItemsSource = new[]
         {
             new ReadinessOption(LaunchReadiness.None, "Nothing"),
@@ -90,7 +95,6 @@ public partial class MainWindow : Window
         // selected profile changes the grid's source, rows can be prepared before
         // they have a usable index, leaving the launch order blank until something
         // regenerates them. This fires whenever containers actually exist.
-        ApplicationsGrid.ItemContainerGenerator.StatusChanged += ApplicationRows_StatusChanged;
         _applicationIcon = TryLoadApplicationIcon();
         _trayIcon = new Forms.NotifyIcon
         {
@@ -145,12 +149,14 @@ public partial class MainWindow : Window
         _document.Settings.StartWithWindows = _startup.IsRegistered;
         StartWithWindowsCheckBox.IsChecked = _document.Settings.StartWithWindows;
         ShowLaunchDelaysCheckBox.IsChecked = _document.Settings.ShowLaunchDelays;
+        ApplyDragReorderState();
         LaunchReadinessCombo.SelectedValue = _document.Settings.LaunchReadiness;
         LaunchReadinessTimeoutBox.Text = _document.Settings.LaunchReadinessTimeoutMs.ToString();
         ApplyLaunchDelayVisibility();
         DisplaySettleDelayBox.Text = _document.Settings.DisplaySettleDelayMs.ToString();
         RebuildStartupProfileCombo();
         _loadingSettings = false;
+        RefreshApplicationIssues();
         UpdateHotkeyButton();
         RebuildAudioCombos();
         ApplyHotkeys();
@@ -925,6 +931,7 @@ public partial class MainWindow : Window
         ApplicationsGrid.SelectedItem = app;
         ApplicationsGrid.ScrollIntoView(app);
         await SaveAsync();
+        RefreshApplicationIssues();
     }
 
     private async void RemoveApplication_Click(object sender, RoutedEventArgs e)
@@ -932,6 +939,8 @@ public partial class MainWindow : Window
         if (SelectedProfile is not { } profile || ApplicationsGrid.SelectedItem is not LaunchApplication app) return;
         profile.Applications.Remove(app);
         await SaveAsync();
+        // Removing one entry can clear the duplicate marker on the one it collided with.
+        RefreshApplicationIssues();
     }
 
     private async void MoveApplicationUp_Click(object sender, RoutedEventArgs e) => await MoveSelectedApplicationAsync(-1);
@@ -946,33 +955,89 @@ public partial class MainWindow : Window
         if (newIndex < 0 || newIndex >= profile.Applications.Count) return;
         profile.Applications.Move(oldIndex, newIndex);
         ApplicationsGrid.SelectedItem = app;
-        RenumberApplicationRows();
         await SaveAsync();
     }
 
     /// <summary>
-    /// Numbers the rows so the launch order is visible rather than implied by
-    /// position alone.
+    /// Marks the entries that will not work, so a moved executable or a duplicate
+    /// is visible while editing rather than only mid-switch.
     /// </summary>
-    private void ApplicationsGrid_LoadingRow(object sender, DataGridRowEventArgs e) =>
-        e.Row.Header = (e.Row.GetIndex() + 1).ToString();
-
-    private void ApplicationRows_StatusChanged(object? sender, EventArgs e)
+    private void RefreshApplicationIssues()
     {
-        if (ApplicationsGrid.ItemContainerGenerator.Status ==
-            System.Windows.Controls.Primitives.GeneratorStatus.ContainersGenerated)
-            RenumberApplicationRows();
+        if (!_profilesLoaded) return;
+        _issues.Watch(SelectedProfile);
+    }
+
+    private System.Windows.Point _dragOrigin;
+    private LaunchApplication? _dragCandidate;
+
+    private void ToggleDragReorder_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_profilesLoaded) return;
+        _document.Settings.AllowApplicationDragReorder = !_document.Settings.AllowApplicationDragReorder;
+        _ = SaveAsync();
     }
 
     /// <summary>
-    /// Rows keep their old numbers after a move, because only the moved container
-    /// is regenerated. Renumber the ones currently realized.
+    /// Points the lock button at the setting it shows. Its glyph, colour, and
+    /// tooltip come from a style bound to that setting, so the button cannot end
+    /// up showing one state while the grid is in the other.
     /// </summary>
-    private void RenumberApplicationRows()
+    private void ApplyDragReorderState() => DragLockButton.DataContext = _document.Settings;
+
+    private void ApplicationsGrid_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        for (var index = 0; index < ApplicationsGrid.Items.Count; index++)
-            if (ApplicationsGrid.ItemContainerGenerator.ContainerFromIndex(index) is DataGridRow row)
-                row.Header = (index + 1).ToString();
+        _dragOrigin = e.GetPosition(null);
+        _dragCandidate = FindRowItem(e.OriginalSource as DependencyObject);
+    }
+
+    private void ApplicationsGrid_PreviewMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (!_document.Settings.AllowApplicationDragReorder) return;
+        if (e.LeftButton != MouseButtonState.Pressed || _dragCandidate is null) return;
+
+        // Wait for the system drag threshold, so a click that happens to wobble
+        // does not become a reorder.
+        var moved = e.GetPosition(null) - _dragOrigin;
+        if (Math.Abs(moved.X) < SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(moved.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+
+        var dragged = _dragCandidate;
+        _dragCandidate = null;
+        System.Windows.DragDrop.DoDragDrop(ApplicationsGrid, dragged, System.Windows.DragDropEffects.Move);
+    }
+
+    private void ApplicationsGrid_DragOver(object sender, System.Windows.DragEventArgs e)
+    {
+        e.Effects = _document.Settings.AllowApplicationDragReorder && e.Data.GetDataPresent(typeof(LaunchApplication))
+            ? System.Windows.DragDropEffects.Move
+            : System.Windows.DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private async void ApplicationsGrid_Drop(object sender, System.Windows.DragEventArgs e)
+    {
+        if (!_document.Settings.AllowApplicationDragReorder) return;
+        if (SelectedProfile is not { } profile) return;
+        if (e.Data.GetData(typeof(LaunchApplication)) is not LaunchApplication dragged) return;
+
+        var target = FindRowItem(e.OriginalSource as DependencyObject);
+        var from = profile.Applications.IndexOf(dragged);
+        // Dropping past the last row means the end of the list.
+        var to = target is null ? profile.Applications.Count - 1 : profile.Applications.IndexOf(target);
+        if (from < 0 || to < 0 || from == to) return;
+
+        profile.Applications.Move(from, to);
+        ApplicationsGrid.SelectedItem = dragged;
+        await SaveAsync();
+        StatusText.Text = $"Moved {dragged.Name} to position {to + 1}.";
+    }
+
+    private static LaunchApplication? FindRowItem(DependencyObject? source)
+    {
+        while (source is not null and not DataGridRow)
+            source = System.Windows.Media.VisualTreeHelper.GetParent(source);
+        return (source as DataGridRow)?.Item as LaunchApplication;
     }
 
     private void ApplyLaunchDelayVisibility() =>
@@ -1022,7 +1087,11 @@ public partial class MainWindow : Window
 
     private async void ApplicationsGrid_RowEditEnding(object sender, DataGridRowEditEndingEventArgs e)
     {
-        await Dispatcher.InvokeAsync(async () => await SaveAsync());
+        await Dispatcher.InvokeAsync(async () =>
+        {
+            await SaveAsync();
+            RefreshApplicationIssues();
+        });
     }
 
     private async void ProfilesList_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1030,6 +1099,7 @@ public partial class MainWindow : Window
         if (SelectedProfile is { } selectedProfile) _profileBeforeSettings = selectedProfile;
         EndHotkeyCapture();
         RebuildAudioCombos();
+        RefreshApplicationIssues();
         if (!IsLoaded || _openingSettings || SelectedProfile is null) return;
         MainTabs.SelectedIndex = 0;
         await SaveAsync();
@@ -1391,7 +1461,6 @@ public partial class MainWindow : Window
         _observedProfiles.Clear();
         _processes.PendingCloseCompleted -= ProcessService_PendingCloseCompleted;
         _processes.PendingMinimizationCompleted -= ProcessService_PendingMinimizationCompleted;
-        ApplicationsGrid.ItemContainerGenerator.StatusChanged -= ApplicationRows_StatusChanged;
         _activator.ActivationRecorded -= Activator_ActivationRecorded;
         _hotkeys.HotkeyPressed -= Hotkeys_HotkeyPressed;
         _hotkeys.Dispose();
