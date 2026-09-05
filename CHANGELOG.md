@@ -9,9 +9,17 @@ Releases are published from tags of the form `v<version>`. The tag, the
 `<Version>` in [Directory.Build.props](Directory.Build.props), and the heading in
 this file must all agree; the release workflow fails the build when they do not.
 
-## 0.4.7
+## 0.5.0
+
+Quality-of-life release.
 
 ### Added
+
+- **View layout** in the profile editor draws the monitors a profile will
+  arrange, to scale and in their real positions, with the primary display
+  highlighted and each panel labelled with its resolution, refresh rate, and
+  rotation. Captured NVIDIA Surround grids are shown alongside: topology,
+  per-display mode, bezel correction, colour depth, and panel order.
 
 - Global shortcuts. Click **Set shortcut** on a profile and press the keys you
   want, such as Ctrl+Alt+W; the combination is recorded as you press it rather

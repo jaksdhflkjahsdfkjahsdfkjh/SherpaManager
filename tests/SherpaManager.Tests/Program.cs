@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Windows;
 using SherpaManager.Models;
 using SherpaManager.Services;
 
@@ -67,7 +68,10 @@ internal static class Program
             ("A restored window is not minimized again", TestRestoredWindowStaysRestoredAsync),
             ("Applications wait for the displays to settle", TestDisplaySettleDelayAsync),
             ("The display settle delay is bounded", TestDisplaySettleDelayBoundsAsync),
-            ("The NVIDIA app is found where it is actually installed", TestNvidiaAppLocatorAsync)
+            ("The NVIDIA app is found where it is actually installed", TestNvidiaAppLocatorAsync),
+            ("Display layouts scale and place every monitor", TestDisplayLayoutGeometryAsync),
+            ("Display layouts survive layouts that cannot be drawn", TestDisplayLayoutEdgeCasesAsync),
+            ("The display layout window renders every monitor", TestDisplayLayoutWindowRendersAsync)
         };
 
         var selectedTests = tests.ToList();
@@ -1793,6 +1797,132 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    private static Task TestDisplayLayoutGeometryAsync()
+    {
+        // Two 1920x1080 monitors side by side, the right one primary at the origin.
+        var snapshot = new DisplaySnapshot
+        {
+            ActiveTargets =
+            [
+                Monitor("left", "Dell P2419H", 1920, 1080, x: -1920),
+                Monitor("right", "AOC 27B36X", 1920, 1080, refreshHz: 144)
+            ]
+        };
+
+        var view = DisplayLayoutBuilder.Build(snapshot, 384, 216);
+        Assert(view.Tiles.Count == 2, $"Expected two tiles, got {view.Tiles.Count}.");
+
+        // 3840x1080 of desktop into 384x216 scales by 0.1, limited by width.
+        Assert(Math.Abs(view.Width - 384) < 0.01, $"Expected a width of 384, got {view.Width}.");
+        Assert(Math.Abs(view.Height - 108) < 0.01, $"Expected a height of 108, got {view.Height}.");
+
+        // Negative desktop coordinates must be shifted so drawing starts at zero.
+        var left = view.Tiles.Single(tile => tile.Name == "Dell P2419H");
+        var right = view.Tiles.Single(tile => tile.Name == "AOC 27B36X");
+        Assert(Math.Abs(left.X) < 0.01, $"The leftmost monitor should start at zero, got {left.X}.");
+        Assert(Math.Abs(right.X - 192) < 0.01, $"The right monitor should start at 192, got {right.X}.");
+        Assert(Math.Abs(left.Width - 192) < 0.01 && Math.Abs(left.Height - 108) < 0.01,
+            "Monitors should scale by the same factor as the desktop.");
+
+        Assert(right.IsPrimary, "The monitor at the desktop origin is the primary.");
+        Assert(!left.IsPrimary, "A monitor away from the origin is not the primary.");
+        Assert(right.Detail.Contains("144", StringComparison.Ordinal),
+            $"The refresh rate should be shown, got '{right.Detail}'.");
+        Assert(view.Summary.Contains("2 monitors", StringComparison.Ordinal),
+            $"Unexpected summary '{view.Summary}'.");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestDisplayLayoutEdgeCasesAsync()
+    {
+        Assert(!DisplayLayoutBuilder.Build(null, 400, 300).HasTiles,
+            "A profile with no captured layout has nothing to draw.");
+        Assert(!DisplayLayoutBuilder.Build(new DisplaySnapshot(), 400, 300).HasTiles,
+            "A snapshot with no monitors has nothing to draw.");
+
+        // A monitor reported with no size cannot be placed. It must be left out
+        // and accounted for, not silently dropped or allowed to divide by zero.
+        var partial = new DisplaySnapshot
+        {
+            ActiveTargets =
+            [
+                Monitor("good", "AOC 27B36X", 2560, 1440),
+                Monitor("broken", "Ghost", 0, 0, x: 5000)
+            ]
+        };
+        var view = DisplayLayoutBuilder.Build(partial, 400, 300);
+        Assert(view.Tiles.Count == 1, $"Expected the unusable monitor to be left out, got {view.Tiles.Count} tiles.");
+        Assert(view.Summary.Contains("no usable size", StringComparison.OrdinalIgnoreCase),
+            $"The summary should account for the skipped monitor, got '{view.Summary}'.");
+
+        var unusable = DisplayLayoutBuilder.Build(
+            new DisplaySnapshot { ActiveTargets = [Monitor("broken", "Ghost", 0, 0)] }, 400, 300);
+        Assert(!unusable.HasTiles && unusable.Summary.Length > 0,
+            "A layout with only unusable monitors should explain itself rather than draw nothing.");
+
+        // A small layout must not be blown up to fill the dialog.
+        var small = DisplayLayoutBuilder.Build(
+            new DisplaySnapshot { ActiveTargets = [Monitor("one", "Small", 800, 600)] }, 4000, 3000);
+        Assert(Math.Abs(small.Width - 800) < 0.01 && Math.Abs(small.Height - 600) < 0.01,
+            $"A layout smaller than the canvas should not be scaled up; got {small.Width}x{small.Height}.");
+
+        // Degenerate canvas sizes must not divide by zero or produce NaN.
+        var tiny = DisplayLayoutBuilder.Build(
+            new DisplaySnapshot { ActiveTargets = [Monitor("one", "Big", 3840, 2160)] }, 0, 0);
+        Assert(tiny.HasTiles && !double.IsNaN(tiny.Width) && tiny.Width > 0,
+            $"A zero-sized canvas should still produce a drawable tile; got width {tiny.Width}.");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestDisplayLayoutWindowRendersAsync()
+    {
+        var snapshot = new DisplaySnapshot
+        {
+            ActiveTargets =
+            [
+                Monitor("left", "Dell P2419H", 1920, 1080, x: -1920),
+                Monitor("centre", "AOC 27B36X", 2560, 1440, refreshHz: 144),
+                Monitor("right", "LG 27GL850", 1920, 1080, x: 2560, rotation: 2)
+            ],
+            NvidiaSurround = new NvidiaSurroundSnapshot
+            {
+                ApiAvailable = true,
+                StatusKnown = true,
+                Enabled = true,
+                FullGridCaptured = true,
+                DisplayGrids =
+                [
+                    new NvidiaSurroundDisplayGridSnapshot
+                    {
+                        Rows = 1,
+                        Columns = 3,
+                        PerDisplayWidth = 1920,
+                        PerDisplayHeight = 1080,
+                        RefreshRate = 144,
+                        ApplyWithBezelCorrection = true,
+                        BitsPerPixel = 32
+                    }
+                ]
+            }
+        };
+
+        var bindingErrors = new List<string>();
+        var rendered = RenderOffScreen(() => new DisplayLayoutWindow("iRacing", snapshot), bindingErrors);
+
+        Assert(bindingErrors.Count == 0,
+            $"The layout window reported data binding errors: {string.Join(" | ", bindingErrors)}");
+
+        foreach (var expected in new[] { "Dell P2419H", "AOC 27B36X", "LG 27GL850", "iRacing display layout" })
+            Assert(rendered.Any(text => text.Contains(expected, StringComparison.Ordinal)),
+                $"'{expected}' never reached the window.");
+
+        // The Surround card has to show the grid, not just say it is enabled.
+        foreach (var expected in new[] { "1 × 3", "Applied" })
+            Assert(rendered.Any(text => text.Contains(expected, StringComparison.Ordinal)),
+                $"The Surround detail '{expected}' was not rendered.");
+        return Task.CompletedTask;
+    }
+
     private static DisplayTargetSnapshot Monitor(string identity, string name, uint width, uint height,
         uint refreshHz = 60, int x = 0, int y = 0, uint rotation = 1) => new()
     {
@@ -2005,53 +2135,9 @@ internal static class Program
         var preflight = new ActivationPreflightService(displays, processes).Build(document, target);
         var expected = preflight.AllItems.Select(item => item.Title).ToList();
 
-        Exception? failure = null;
         var bindingErrors = new List<string>();
-        var rendered = new List<string>();
+        var rendered = RenderOffScreen(() => new ActivationPreflightWindow(preflight), bindingErrors);
 
-        var thread = new Thread(() =>
-        {
-            try
-            {
-                if (System.Windows.Application.Current is null)
-                {
-                    var app = new App();
-                    app.InitializeComponent();
-                }
-
-                var listener = new BindingErrorListener(bindingErrors);
-                System.Diagnostics.PresentationTraceSources.Refresh();
-                System.Diagnostics.PresentationTraceSources.DataBindingSource.Listeners.Add(listener);
-                System.Diagnostics.PresentationTraceSources.DataBindingSource.Switch.Level =
-                    System.Diagnostics.SourceLevels.Error | System.Diagnostics.SourceLevels.Warning;
-
-                var window = new ActivationPreflightWindow(preflight)
-                {
-                    ShowActivated = false,
-                    Opacity = 0,
-                    WindowStartupLocation = System.Windows.WindowStartupLocation.Manual,
-                    Left = -32000,
-                    Top = -32000
-                };
-                try
-                {
-                    window.Show();
-                    window.UpdateLayout();
-                    CollectText(window, rendered);
-                }
-                finally
-                {
-                    window.Close();
-                    System.Diagnostics.PresentationTraceSources.DataBindingSource.Listeners.Remove(listener);
-                }
-            }
-            catch (Exception exception) { failure = exception; }
-        });
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-        thread.Join(TimeSpan.FromSeconds(60));
-
-        if (failure is not null) throw new InvalidOperationException("The preview window failed to render.", failure);
         Assert(bindingErrors.Count == 0,
             $"The preview window reported data binding errors: {string.Join(" | ", bindingErrors)}");
         Assert(expected.Count > 0, "The fixture should produce at least one preview item.");
@@ -2060,6 +2146,92 @@ internal static class Program
         Assert(missing.Count == 0,
             $"These preview items never reached the window: {string.Join(" | ", missing)}");
         return Task.CompletedTask;
+    }
+
+    private static System.Windows.Threading.Dispatcher? _uiDispatcher;
+    private static readonly object UiGate = new();
+
+    /// <summary>
+    /// One STA thread with a running dispatcher and a single WPF Application,
+    /// shared by every window test.
+    /// </summary>
+    /// <remarks>
+    /// Application.Current is per process but has thread affinity. A second test
+    /// creating its own thread finds Application.Current already owned by the
+    /// first, and its window then builds no visual tree at all - silently, with
+    /// no exception to catch. One UI thread also matches how the app really runs.
+    /// </remarks>
+    private static System.Windows.Threading.Dispatcher UiDispatcher()
+    {
+        lock (UiGate)
+        {
+            if (_uiDispatcher is not null) return _uiDispatcher;
+
+            using var ready = new ManualResetEventSlim();
+            Exception? startupFailure = null;
+            var thread = new Thread(() =>
+            {
+                try
+                {
+                    var app = new App();
+                    app.InitializeComponent();
+                    _uiDispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher;
+                }
+                catch (Exception exception) { startupFailure = exception; }
+                finally { ready.Set(); }
+
+                if (startupFailure is null) System.Windows.Threading.Dispatcher.Run();
+            }) { IsBackground = true, Name = "SherpaManager.Tests UI" };
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.Start();
+
+            if (!ready.Wait(TimeSpan.FromSeconds(30)))
+                throw new TimeoutException("The WPF test host did not start.");
+            if (startupFailure is not null)
+                throw new InvalidOperationException("The WPF test host failed to start.", startupFailure);
+            return _uiDispatcher!;
+        }
+    }
+
+    private static void OnUiThread(Action action)
+    {
+        var completed = UiDispatcher().InvokeAsync(action).Task;
+        if (!completed.Wait(TimeSpan.FromSeconds(60)))
+            throw new TimeoutException("A UI test operation timed out.");
+        if (completed.IsFaulted) throw completed.Exception!.InnerException ?? completed.Exception;
+    }
+
+    /// <summary>Renders a window off-screen and returns every text node in it.</summary>
+    private static List<string> RenderOffScreen(Func<Window> create, List<string> bindingErrors)
+    {
+        var rendered = new List<string>();
+        OnUiThread(() =>
+        {
+            var listener = new BindingErrorListener(bindingErrors);
+            System.Diagnostics.PresentationTraceSources.Refresh();
+            System.Diagnostics.PresentationTraceSources.DataBindingSource.Listeners.Add(listener);
+            System.Diagnostics.PresentationTraceSources.DataBindingSource.Switch.Level =
+                System.Diagnostics.SourceLevels.Error | System.Diagnostics.SourceLevels.Warning;
+
+            var window = create();
+            window.ShowActivated = false;
+            window.Opacity = 0;
+            window.WindowStartupLocation = System.Windows.WindowStartupLocation.Manual;
+            window.Left = -32000;
+            window.Top = -32000;
+            try
+            {
+                window.Show();
+                window.UpdateLayout();
+                CollectText(window, rendered);
+            }
+            finally
+            {
+                window.Close();
+                System.Diagnostics.PresentationTraceSources.DataBindingSource.Listeners.Remove(listener);
+            }
+        });
+        return rendered;
     }
 
     private static void CollectText(System.Windows.DependencyObject root, List<string> into)

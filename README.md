@@ -131,6 +131,8 @@ If Sherpa Manager is already running, a second launch hands its request to the r
 
 ## Display safety and recovery
 
+**View layout** in the profile editor draws the monitors a profile will arrange, to scale and in their real positions, before you activate anything. The primary display is highlighted, each panel shows its resolution, refresh rate, and rotation, and a captured NVIDIA Surround grid is described alongside: topology, per-display mode, bezel correction, colour depth, and panel order. It reads the saved snapshot only and changes nothing.
+
 Activating a profile is the most disruptive thing Sherpa does, so it shows a preview first. The preview lists the monitors that will be enabled and disabled, resolution, refresh-rate, rotation and primary-display changes, whether NVIDIA Surround will be turned on or off, and which applications will start, stay running, or be closed. Entries that cannot work — an executable that is no longer where the profile expects it, or a working directory that no longer exists — are reported as problems before anything is applied, instead of as warnings once the switch is already under way.
 
 Items needing attention are highlighted: closing an application can lose unsaved work, and disabling a monitor removes it from the Windows desktop. The preview only reads the current state; it never changes displays or processes. You can still continue when it reports problems, in which case those entries are skipped. Turn the preview off in **Settings**, or with **Do not show this again** in the preview itself.

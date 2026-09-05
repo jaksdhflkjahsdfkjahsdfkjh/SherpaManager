@@ -162,8 +162,10 @@
                                           SelectedValue="{Binding NvidiaSurroundMode, UpdateSourceTrigger=PropertyChanged}"/>
                             </Grid>
 
-                            <UniformGrid Columns="3" Rows="2" Margin="-4,12,-4,-4">
+                            <UniformGrid Columns="3" Rows="3" Margin="-4,12,-4,-4">
                                 <Button Content="Capture current" Click="CaptureDisplay_Click" Margin="4"/>
+                                <Button Content="View layout" Click="ViewDisplayLayout_Click" Margin="4"
+                                        ToolTip="See the monitors this profile will arrange, drawn to scale."/>
                                 <Button Content="Test layout" Click="TestDisplay_Click" Margin="4"/>
                                 <Button Content="Clear saved" Click="ClearDisplay_Click" Margin="4"/>
                                 <Button Content="Restore previous" Click="RestoreLastDisplay_Click" Margin="4"/>

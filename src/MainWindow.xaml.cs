@@ -1230,6 +1230,12 @@ public partial class MainWindow : Window
         Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{_store.FilePath}\"") { UseShellExecute = true });
     }
 
+    private void ViewDisplayLayout_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedProfile is not { } profile) return;
+        new DisplayLayoutWindow(profile.Name, profile.Display) { Owner = this }.ShowDialog();
+    }
+
     private void OpenDisplaySettings_Click(object sender, RoutedEventArgs e) =>
         Process.Start(new ProcessStartInfo("ms-settings:display") { UseShellExecute = true });
 
