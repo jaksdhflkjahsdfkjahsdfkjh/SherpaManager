@@ -162,7 +162,7 @@ public sealed class ActivationPreflightService(IDisplayConfigurationService disp
         {
             section.Items.Add(new PreflightItem(PreflightSeverity.Problem,
                 "Surround must be enabled, but the driver reports no usable grid.",
-                $"{live.Description} Capture the sim profile while Surround is on, or enable it in NVIDIA Control Panel first."));
+                $"{live.Description} Capture the sim profile while Surround is on, or enable it in the NVIDIA app first."));
             return section;
         }
 

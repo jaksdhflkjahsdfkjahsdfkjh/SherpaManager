@@ -91,9 +91,9 @@ The `build/` directory is intentionally ignored. Packaged binaries are published
 
 ### NVIDIA Surround triples
 
-1. Open **NVIDIA Control Panel** from Sherpa and configure/apply the 3×1 Surround topology, including bezel correction and refresh rate.
+1. Click **NVIDIA settings** in Sherpa. On current drivers this opens the NVIDIA app directly on **System → Display**; on older systems it opens NVIDIA Control Panel. Configure and apply the 3×1 Surround topology there, including bezel correction and refresh rate.
 2. Capture the sim profile while Surround is enabled. Sherpa saves the complete active NVAPI display grid—including display IDs in row/column order, per-panel bezel overlap, bezel-corrected resolution choice, rotation, per-panel resolution, color depth, and refresh rate—and automatically selects **Require enabled**.
-3. Disable Surround in NVIDIA Control Panel, choose the desired Windows **Show only on** work display, and capture **Work** again. Sherpa automatically selects **Require disabled** when the NVIDIA driver retains a configured topology.
+3. Disable Surround from **NVIDIA settings**, choose the desired Windows **Show only on** work display, and capture **Work** again. Sherpa automatically selects **Require disabled** when the NVIDIA driver retains a configured topology.
 4. Test both directions and keep each confirmed layout.
 
 During activation Sherpa first validates and restores the saved NVIDIA grid (or disables Surround), applies and verifies the exact Windows monitor paths, and only then closes the old profile's applications and launches the target applications. If an old-profile application cannot be closed, Sherpa restores the previous display layout and restarts applications already closed by that switch. The NVIDIA change uses the current GPU topology and blocks any operation requiring a disruptive driver reload. If the saved displays are unavailable or NVAPI rejects the grid, Sherpa stops and restores the prior NVIDIA and Windows states instead of continuing blindly.
@@ -158,7 +158,7 @@ Use **Settings → Copy diagnostics** to copy the Sherpa and Windows versions, G
 - Windows only.
 - A global shortcut is claimed first-come-first-served by Windows. If another application already holds the combination, Sherpa reports it and the profile keeps working from the window, tray, or command line.
 - Display layouts are hardware-specific and are not intended to move between computers.
-- NVAPI Surround support depends on the installed NVIDIA GPU and driver. The sim profile must be captured while Surround is enabled because NVAPI only enumerates complete active grids; unsupported drivers and driver-reload-required topologies fail safely and require NVIDIA Control Panel.
+- NVAPI Surround support depends on the installed NVIDIA GPU and driver. The sim profile must be captured while Surround is enabled because NVAPI only enumerates complete active grids; unsupported drivers and driver-reload-required topologies fail safely and have to be applied in the NVIDIA app first.
 - Scripts and custom protocols may be launch-only when Windows does not expose the process they create.
 - Automatic force-closing can discard unsaved work; disable **Close on switch** for applications that must remain open safely.
 - The live 10-second countdown requires Sherpa to remain running. If the process or system stops during a display transaction, recovery resumes as an explicit restore offer the next time Sherpa starts; Win+P and Windows Display Settings remain the final manual recovery paths.

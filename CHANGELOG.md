@@ -48,6 +48,22 @@ this file must all agree; the release workflow fails the build when they do not.
 
 - **Browse** no longer leaves an empty application row behind when the file
   dialog is cancelled. The row is created only once a file has been chosen.
+- **NVIDIA settings** opens the NVIDIA app directly on **System -> Display**,
+  where Surround is configured, using the `nvidiaapp://route/#nvapp/...` scheme
+  NVIDIA registers. Older systems still get NVIDIA Control Panel. Messages that
+  told you to open NVIDIA Control Panel now name the NVIDIA app, since recent
+  drivers no longer install a Control Panel.
+- **NVIDIA settings** detects which NVIDIA software is actually installed: the
+  NVIDIA app, the driver-installed Control Panel in either of its two locations,
+  or the Store-packaged Control Panel. Every candidate is verified before it is
+  launched, including that the registered protocol handler still points at a file
+  that exists.
+- **NVIDIA settings** opens the NVIDIA app instead of the Documents folder. It
+  targeted the old NVIDIA Control Panel Store package by identifier; on machines
+  where NVIDIA has replaced the Control Panel with the NVIDIA app that package no
+  longer exists, and asking Explorer to open an unknown identifier silently opens
+  Documents rather than failing. Sherpa now locates the installed application and
+  says so plainly when there is none.
 - An application started minimized can be opened again. The window watcher polls
   for up to 45 seconds so a launcher that opens its real window late is still
   minimized, but it used to re-minimize every matching window on every poll,

@@ -210,7 +210,7 @@ public sealed class NvidiaSurroundService : INvidiaSurroundService, IDisposable
             if (!snapshot.FullGridCaptured || snapshot.DisplayGrids is null ||
                 !snapshot.DisplayGrids.Any(IsMultiDisplayGrid))
                 throw new InvalidOperationException(
-                    "This profile does not contain a complete NVIDIA Surround grid. Enable and fully configure Surround in NVIDIA Control Panel, then use Capture current again.");
+                    "This profile does not contain a complete NVIDIA Surround grid. Enable and fully configure Surround in the NVIDIA app, then use Capture current again.");
             if (_validateDisplayGrids is null || _setDisplayGrids is null)
                 throw new InvalidOperationException(
                     "The installed NVIDIA driver does not expose the full grid API required to restore panel order, bezel correction, and resolution.");
@@ -265,7 +265,7 @@ public sealed class NvidiaSurroundService : INvidiaSurroundService, IDisposable
 
         if (result == NvApiDriverReloadRequired)
             throw new InvalidOperationException(
-                "NVIDIA requires a driver reload for this Surround topology. Sherpa deliberately blocked that disruptive change; apply it once in NVIDIA Control Panel and capture again.");
+                "NVIDIA requires a driver reload for this Surround topology. Sherpa deliberately blocked that disruptive change; apply it once in the NVIDIA app and capture again.");
         if (result != NvApiOk)
             throw new InvalidOperationException(
                 $"NVIDIA rejected the saved Surround grid (NVAPI {result}{validationFailure}). No Windows display changes were applied.");

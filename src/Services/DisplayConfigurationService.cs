@@ -139,7 +139,7 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
         if (saveEmergencySnapshot) _recoveryStore.Save(emergencySnapshot);
         var surroundWasManaged = surroundMode != NvidiaSurroundMode.Ignore;
         if (surroundWasManaged && emergencySnapshot.NvidiaSurround?.StatusKnown != true)
-            throw new InvalidOperationException("Sherpa cannot change NVIDIA Surround because it could not capture a known rollback state. Try again after NVIDIA Control Panel reports the topology normally.");
+            throw new InvalidOperationException("Sherpa cannot change NVIDIA Surround because it could not capture a known rollback state. Try again once the NVIDIA app reports the topology normally.");
         if (trackInterruptedTransaction)
             _transactionStore.Begin(emergencySnapshot, requested.Summary);
 
@@ -282,7 +282,7 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
 
         var enabled = mode == NvidiaSurroundMode.RequireEnabled;
         if (enabled && !expected.FullGridCaptured)
-            throw new InvalidOperationException("This profile predates complete NVIDIA Surround capture. Enable the required Surround layout in NVIDIA Control Panel and use Capture current again.");
+            throw new InvalidOperationException("This profile predates complete NVIDIA Surround capture. Enable the required Surround layout in the NVIDIA app and use Capture current again.");
         _nvidiaSurround.ApplyConfiguration(expected, enabled);
         await WaitForSurroundStateAsync(expected, enabled, cancellationToken);
     }

@@ -66,7 +66,8 @@ internal static class Program
             ("A duplicated profile does not inherit the shortcut", TestProfileCloneDropsHotkeyAsync),
             ("A restored window is not minimized again", TestRestoredWindowStaysRestoredAsync),
             ("Applications wait for the displays to settle", TestDisplaySettleDelayAsync),
-            ("The display settle delay is bounded", TestDisplaySettleDelayBoundsAsync)
+            ("The display settle delay is bounded", TestDisplaySettleDelayBoundsAsync),
+            ("The NVIDIA app is found where it is actually installed", TestNvidiaAppLocatorAsync)
         };
 
         var selectedTests = tests.ToList();
@@ -1722,6 +1723,73 @@ internal static class Program
         settings.DisplaySettleDelayMs = int.MaxValue;
         Assert(settings.DisplaySettleDelayMs == AppSettings.MaximumDisplaySettleDelayMs,
             "A huge delay should be capped so a bad value cannot appear to hang a profile switch.");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestNvidiaAppLocatorAsync()
+    {
+        using var directory = new TemporaryDirectory();
+        var root = Path.Combine(directory.Path, "NVIDIA Corporation");
+        var system = Path.Combine(directory.Path, "System32");
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(system);
+
+        // The deep link wins whenever Windows has a handler for the scheme: it
+        // opens the display page rather than wherever the app was last left.
+        var deepLink = NvidiaAppLocator.Locate(root, system, protocolRegistered: true);
+        Assert(deepLink is not null, "A registered protocol should always yield a target.");
+        Assert(deepLink!.FileName == NvidiaAppLocator.DisplaySettingsUri,
+            $"Expected the display deep link, got '{deepLink.FileName}'.");
+        Assert(NvidiaAppLocator.DisplaySettingsUri.StartsWith("nvidiaapp://route/#nvapp/", StringComparison.Ordinal),
+            "The deep link must use NVIDIA's own route format.");
+
+        // Everything below is the fallback path, with no protocol handler.
+        Assert(NvidiaAppLocator.Locate(root, system, protocolRegistered: false) is null,
+            "Nothing should be reported when no NVIDIA application is installed.");
+
+        // The observed layout: NVIDIA Corporation\NVIDIA App\CEF\NVIDIA app.exe.
+        var cef = Path.Combine(root, "NVIDIA App", "CEF");
+        Directory.CreateDirectory(cef);
+        var appExecutable = Path.Combine(cef, "NVIDIA app.exe");
+        File.WriteAllText(appExecutable, string.Empty);
+
+        var located = NvidiaAppLocator.Locate(root, system, protocolRegistered: false);
+        Assert(located is not null, "The NVIDIA app was not found in its nested folder.");
+        Assert(located!.FileName.Equals(appExecutable, StringComparison.OrdinalIgnoreCase),
+            $"Located '{located.FileName}' instead of '{appExecutable}'.");
+        Assert(located.DisplayName == "NVIDIA app", $"Unexpected display name '{located.DisplayName}'.");
+
+        // The driver-installed Control Panel is the fallback for older systems.
+        Directory.Delete(Path.Combine(root, "NVIDIA App"), recursive: true);
+        var controlPanel = Path.Combine(system, "nvcplui.exe");
+        File.WriteAllText(controlPanel, string.Empty);
+        var legacy = NvidiaAppLocator.Locate(root, system, protocolRegistered: false);
+        Assert(legacy is not null && legacy.FileName.Equals(controlPanel, StringComparison.OrdinalIgnoreCase),
+            "The legacy Control Panel should be used when the NVIDIA app is absent.");
+
+        // The app wins when both are present.
+        Directory.CreateDirectory(cef);
+        File.WriteAllText(appExecutable, string.Empty);
+        var preferred = NvidiaAppLocator.Locate(root, system, protocolRegistered: false);
+        Assert(preferred is not null && preferred.FileName.Equals(appExecutable, StringComparison.OrdinalIgnoreCase),
+            "The NVIDIA app should be preferred over the legacy Control Panel.");
+
+        // Standard (non-DCH) drivers put the Control Panel under the NVIDIA folder
+        // rather than System32.
+        Directory.Delete(Path.Combine(root, "NVIDIA App"), recursive: true);
+        File.Delete(controlPanel);
+        var clientDirectory = Path.Combine(root, "Control Panel Client");
+        Directory.CreateDirectory(clientDirectory);
+        var clientExecutable = Path.Combine(clientDirectory, "nvcplui.exe");
+        File.WriteAllText(clientExecutable, string.Empty);
+        var client = NvidiaAppLocator.Locate(root, system, protocolRegistered: false);
+        Assert(client is not null && client.FileName.Equals(clientExecutable, StringComparison.OrdinalIgnoreCase),
+            $"The Control Panel Client location was not found; got '{client?.FileName}'.");
+
+        // A missing root must not throw on a button click.
+        Assert(NvidiaAppLocator.Locate(Path.Combine(directory.Path, "absent"),
+            Path.Combine(directory.Path, "absent"), protocolRegistered: false) is null,
+            "A missing NVIDIA folder should be handled without throwing.");
         return Task.CompletedTask;
     }
 

@@ -1235,13 +1235,22 @@ public partial class MainWindow : Window
 
     private void OpenNvidiaControlPanel_Click(object sender, RoutedEventArgs e)
     {
+        var target = NvidiaAppLocator.Locate();
+        if (target is null)
+        {
+            StatusText.Text = "The NVIDIA app was not found. Install it from nvidia.com, or open your GPU settings from the notification area.";
+            _diagnostics.Write("warning", "nvidia.app.not_found");
+            return;
+        }
+
         try
         {
-            Process.Start(new ProcessStartInfo("explorer.exe",
-                @"shell:AppsFolder\NVIDIACorp.NVIDIAControlPanel_56jybvy8sckqj!NVIDIACorp.NVIDIAControlPanel")
-            { UseShellExecute = true });
+            var startInfo = new ProcessStartInfo(target.FileName) { UseShellExecute = true };
+            if (!string.IsNullOrWhiteSpace(target.Arguments)) startInfo.Arguments = target.Arguments;
+            Process.Start(startInfo);
+            StatusText.Text = $"Opened {target.DisplayName}.";
         }
-        catch (Exception ex) { ShowError("Could not open NVIDIA Control Panel", ex); }
+        catch (Exception ex) { ShowError($"Could not open {target.DisplayName}", ex); }
     }
 
     private async Task<bool> SaveAsync()
