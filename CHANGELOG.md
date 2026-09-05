@@ -9,7 +9,7 @@ Releases are published from tags of the form `v<version>`. The tag, the
 `<Version>` in [Directory.Build.props](Directory.Build.props), and the heading in
 this file must all agree; the release workflow fails the build when they do not.
 
-## 0.5.0
+## 0.5.8
 
 Quality-of-life release.
 
@@ -34,7 +34,6 @@ Quality-of-life release.
   run of switches stays readable: purple when it succeeded, amber when it
   finished with warnings, red when it failed. The newest carries a badge, and
   each shows both the clock time and how long ago it was.
-
 - **+ Add app** now opens a searchable list of the applications installed on
   this PC, read from the Start menu the way Windows reads it, with icons and the
   publisher each one came from. Type to filter by name, publisher, or path;
@@ -51,45 +50,12 @@ Quality-of-life release.
   it, and the choice is remembered. The padlock is drawn from the setting it
   controls, and its two states differ in colour as well as glyph, because an
   open and a closed padlock look nearly the same at that size.
-
-### Fixed
-
-- Waiting for an application to start now waits for something. The default rule
-  was satisfied as soon as a matching process existed, which is true the instant
-  an application is launched, so every application in a profile started at once
-  and the order was decorative. Measured against a fixture that sleeps three
-  seconds before opening, the process was there after 262ms and actually ready
-  after 3,324ms. The rule now waits for the process to finish starting and reach
-  its message loop, which also holds for tray applications that never show a
-  window; anything without a message loop, such as a console application, is
-  treated as ready immediately, as before. The setting is relabelled
-  "It to finish starting".
-- The warning flags and the launch order now follow the application list as it
-  is edited. They were refreshed by each editor action asking for it, and two
-  actions never did: browsing for an executable left the new entry unnumbered
-  and unchecked for problems, and the up and down buttons left the numbering
-  stale. The list is watched instead, so an editor action added later cannot
-  forget.
-
-### Changed
-
-- The application columns no longer sort when their headers are clicked.
-  Sorting the view showed an order that was not the order applications start
-  in, which made the launch order unreadable.
-- The status bar keeps showing the result of a switch. Window minimizing and
-  application closing are watched for up to 45 seconds afterwards, and a
-  successful outcome from one of those watchers used to replace the result with a
-  note about a single application. Only failures from them take the status bar
-  now.
-- A profile's closing message names the switch — "Switched to iRacing" — rather
-  than reading "iRacing is ready", which was indistinguishable from the readiness
-  message of an application that shares the profile's name.
-- The status bar reports the result of a switch rather than its last progress
-  message, and colours it: plain when a switch succeeded, amber when it finished
-  with warnings or was cancelled, red when it failed, with the error text
-  included. Individual warnings are reported as they happen and kept in the
-  switch history, so the closing message counts them instead of concatenating
-  them into a line too long to read.
+- **Settings -> Wait after display changes**, applied between the display
+  layout and any application being started or closed. Windows returns from the
+  topology call before the monitors have finished re-syncing, and an application
+  started into that window can open on the wrong monitor or at the wrong size.
+  Defaults to 3000 ms; set it to 0 for the previous behaviour.
+- `SHERPA_TEST_FILTER` runs a subset of the test executable by name substring.
 - Per-profile audio output and input. A profile can make a chosen playback and
   recording device the Windows default when it activates, covering both ordinary playback and
   communications. The switch happens before applications start, because most sim
@@ -112,6 +78,23 @@ Quality-of-life release.
 
 ### Changed
 
+- The application columns no longer sort when their headers are clicked.
+  Sorting the view showed an order that was not the order applications start
+  in, which made the launch order unreadable.
+- The status bar keeps showing the result of a switch. Window minimizing and
+  application closing are watched for up to 45 seconds afterwards, and a
+  successful outcome from one of those watchers used to replace the result with a
+  note about a single application. Only failures from them take the status bar
+  now.
+- A profile's closing message names the switch — "Switched to iRacing" — rather
+  than reading "iRacing is ready", which was indistinguishable from the readiness
+  message of an application that shares the profile's name.
+- The status bar reports the result of a switch rather than its last progress
+  message, and colours it: plain when a switch succeeded, amber when it finished
+  with warnings or was cancelled, red when it failed, with the error text
+  included. Individual warnings are reported as they happen and kept in the
+  switch history, so the closing message counts them instead of concatenating
+  them into a line too long to read.
 - The per-application launch delay is hidden by default and enabled from
   **Settings -> Show the per-application launch delay column**. Order and
   readiness cover almost everything; a fixed delay is only needed for scripts,
@@ -126,40 +109,6 @@ Quality-of-life release.
   per-display mode, bezel correction, colour depth, and panel order. The dialog
   sizes itself to its content, up to the height of the screen, so the layout is
   not hidden behind a scrollbar.
-
-### Fixed
-
-- Per-profile audio output had no effect. The audio service was created after the
-  services that consume it, so both the activation and the preview received null
-  and skipped the step silently. Activation now records whether an audio device
-  was requested and whether the service was available, so a skipped step is
-  visible in diagnostics instead of looking like a switch that did not work.
-- Tooltips follow the Sherpa theme instead of the Windows default light one.
-  They are drawn from WPF's own style rather than the window's, so a dark
-  application shows light tooltips until it says otherwise. Long text now wraps
-  within a bounded width rather than stretching across the screen.
-- Dialogs use the dark title bar instead of the Windows default white one. Only
-  the main window opted in, so every dialog Sherpa opened had a white caption
-  above dark content.
-
-- Global shortcuts. Click **Set shortcut** on a profile and press the keys you
-  want, such as Ctrl+Alt+W; the combination is recorded as you press it rather
-  than typed out. It then activates that profile from anywhere in Windows. A
-  combination another application already owns, or one claimed by two profiles,
-  is reported and skipped rather than failing silently.
-- `SherpaManager.exe --activate <profile>` switches by name, matched without
-  case sensitivity. If Sherpa Manager is already running, the request is handed
-  to the running copy instead of starting a second one that would fight it for
-  the display. `--help` lists the arguments.
-- **Create desktop shortcut**, which writes a desktop shortcut that activates
-  the selected profile.
-- **Settings -> Start Sherpa Manager when Windows starts**, registered per user
-  so it needs no administrator rights.
-- **Settings -> Activate at startup**, which applies a chosen profile when
-  Sherpa Manager launches.
-
-### Changed
-
 - Duplicating a profile no longer copies its global shortcut, since two profiles
   cannot own one combination.
 - Renaming, duplicating, and deleting a profile are reachable without scrolling.
@@ -175,6 +124,49 @@ Quality-of-life release.
 
 ### Fixed
 
+- Waiting for an application to start now waits for something. The default rule
+  was satisfied as soon as a matching process existed, which is true the instant
+  an application is launched, so every application in a profile started at once
+  and the order was decorative. Measured against a fixture that sleeps three
+  seconds before opening, the process was there after 262ms and actually ready
+  after 3,324ms. The rule now waits for the process to finish starting and reach
+  its message loop, which also holds for tray applications that never show a
+  window; anything without a message loop, such as a console application, is
+  treated as ready immediately, as before. The setting is relabelled
+  "It to finish starting".
+- The warning flags and the launch order now follow the application list as it
+  is edited. They were refreshed by each editor action asking for it, and two
+  actions never did: browsing for an executable left the new entry unnumbered
+  and unchecked for problems, and the up and down buttons left the numbering
+  stale. The list is watched instead, so an editor action added later cannot
+  forget.
+- Per-profile audio output had no effect. The audio service was created after the
+  services that consume it, so both the activation and the preview received null
+  and skipped the step silently. Activation now records whether an audio device
+  was requested and whether the service was available, so a skipped step is
+  visible in diagnostics instead of looking like a switch that did not work.
+- Tooltips follow the Sherpa theme instead of the Windows default light one.
+  They are drawn from WPF's own style rather than the window's, so a dark
+  application shows light tooltips until it says otherwise. Long text now wraps
+  within a bounded width rather than stretching across the screen.
+- Dialogs use the dark title bar instead of the Windows default white one. Only
+  the main window opted in, so every dialog Sherpa opened had a white caption
+  above dark content.
+- Global shortcuts. Click **Set shortcut** on a profile and press the keys you
+  want, such as Ctrl+Alt+W; the combination is recorded as you press it rather
+  than typed out. It then activates that profile from anywhere in Windows. A
+  combination another application already owns, or one claimed by two profiles,
+  is reported and skipped rather than failing silently.
+- `SherpaManager.exe --activate <profile>` switches by name, matched without
+  case sensitivity. If Sherpa Manager is already running, the request is handed
+  to the running copy instead of starting a second one that would fight it for
+  the display. `--help` lists the arguments.
+- **Create desktop shortcut**, which writes a desktop shortcut that activates
+  the selected profile.
+- **Settings -> Start Sherpa Manager when Windows starts**, registered per user
+  so it needs no administrator rights.
+- **Settings -> Activate at startup**, which applies a chosen profile when
+  Sherpa Manager launches.
 - **Browse** no longer leaves an empty application row behind when the file
   dialog is cancelled. The row is created only once a file has been chosen.
 - **NVIDIA settings** opens the NVIDIA app directly on **System -> Display**,
@@ -197,15 +189,6 @@ Quality-of-life release.
   for up to 45 seconds so a launcher that opens its real window late is still
   minimized, but it used to re-minimize every matching window on every poll,
   including one the user had just restored. It now acts on each window once.
-
-### Added
-
-- **Settings -> Wait after display changes**, applied between the display
-  layout and any application being started or closed. Windows returns from the
-  topology call before the monitors have finished re-syncing, and an application
-  started into that window can open on the wrong monitor or at the wrong size.
-  Defaults to 3000 ms; set it to 0 for the previous behaviour.
-- `SHERPA_TEST_FILTER` runs a subset of the test executable by name substring.
 
 ## 0.4.6
 
