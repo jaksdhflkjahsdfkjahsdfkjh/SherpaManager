@@ -35,6 +35,16 @@ Quality-of-life release.
   finished with warnings, red when it failed. The newest carries a badge, and
   each shows both the clock time and how long ago it was.
 
+- **+ Add app** now opens a searchable list of the applications installed on
+  this PC, read from the Start menu the way Windows reads it, with icons and the
+  publisher each one came from. Type to filter by name, publisher, or path;
+  choose several at once; the name, target, arguments, and working directory are
+  filled in from the shortcut. Uninstallers, help links, and shortcuts whose
+  target has gone are left out, and two shortcuts to the same executable become
+  one entry unless they pass different arguments. Not everything installed has a
+  Start menu entry, and a game launched through a protocol address is not a file
+  at all, so the same window still offers choosing a file and adding an empty row
+  by hand.
 - Applications can be reordered by dragging a row, not only with the arrow
   buttons. Dragging is locked by default so a stray drag while editing cannot
   silently change the launch order; a padlock button beside the arrows unlocks

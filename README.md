@@ -16,6 +16,7 @@ Sherpa Manager is a Windows utility for switching a PC between work and sim-raci
 - Cancel a profile or display operation while Sherpa safely restores the state from before it started.
 - Copy privacy-redacted diagnostics backed by a local rotating structured log.
 - Launch applications in order, resolve `.exe`, `.lnk`, `.url`, script, and protocol targets, and suppress duplicate entries.
+- Add applications by searching what is installed on the PC, read from the Start menu, rather than hunting for an executable in Program Files.
 - Minimize delayed launcher windows such as MOZA Pit House after their real UI process appears.
 - Close visible or hidden application windows and automatically force-close unresponsive apps selected for closing.
 - Activate the existing Sherpa window when opened again instead of creating another instance.
@@ -133,6 +134,12 @@ If the profile also changes displays, Sherpa waits up to 15 seconds for the chos
 If the device never appears, Sherpa leaves the output alone and reports a warning rather than failing the switch; a device you have chosen but unplugged is still listed in the editor so the choice is not silently discarded.
 
 Windows offers no supported way to change the default audio device. Sherpa uses the same undocumented interface every tool for this uses, which has been stable since Windows Vista but is not guaranteed; failures are reported rather than hidden.
+
+## Adding applications
+
+**+ Add app** opens a searchable list of what is installed, built from the Start menu the same way Windows builds it. Type to filter by name, publisher, or path, pick one or several, and the name, executable, arguments, and working directory come from the shortcut. Uninstallers, help links, and shortcuts pointing at something that no longer exists are left out; two shortcuts to the same executable collapse into one entry unless they pass different arguments, since that makes them different things to launch.
+
+Not everything appears there. An application installed without a Start menu entry has no shortcut to find, and a game started through a protocol address such as `steam://rungameid/266410` is not a file at all. The same window offers **Choose a file…** and **Add empty row** for those.
 
 ## Launch order and readiness
 

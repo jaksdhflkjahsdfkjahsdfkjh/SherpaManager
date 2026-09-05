@@ -98,7 +98,10 @@ internal static class Program
             ("Switches are numbered and labelled in the history", TestActivationHistoryLabellingAsync),
             ("Unusable applications are flagged in the editor", TestApplicationIssuesAsync),
             ("Editor flags match what the activation preview reports", TestApplicationIssuesMatchPreviewAsync),
-            ("Tooltips use the Sherpa theme", TestToolTipThemedAsync)
+            ("Tooltips use the Sherpa theme", TestToolTipThemedAsync),
+            ("Installed applications are read from the Start menu", TestInstalledCatalogAsync),
+            ("Searching finds an app by name, publisher, or path", TestInstalledCatalogSearchAsync),
+            ("The application picker lists, filters, and chooses", TestApplicationPickerRendersAsync)
         };
 
         var selectedTests = tests.ToList();
@@ -136,6 +139,196 @@ internal static class Program
 
         Console.WriteLine($"{_passed}/{selectedTests.Count} tests passed.");
         return 0;
+    }
+
+    /// <summary>
+    /// The catalog is read from real Windows shortcuts, so it is checked against
+    /// real ones: a fabricated Start menu, built the same way an installer builds
+    /// the real one.
+    /// </summary>
+    private static Task TestInstalledCatalogAsync()
+    {
+        using var directory = new TemporaryDirectory();
+        var root = Path.Combine(directory.Path, "Programs");
+        var publisher = Path.Combine(root, "Rhinode LLC");
+        var nested = Path.Combine(root, "MOZA", "Tools");
+        Directory.CreateDirectory(publisher);
+        Directory.CreateDirectory(nested);
+
+        // Real executables to point at, so resolution has something to resolve.
+        var paints = Path.Combine(directory.Path, "TradingPaints.exe");
+        var pit = Path.Combine(directory.Path, "PitHouse.exe");
+        var gone = Path.Combine(directory.Path, "Removed.exe");
+        var notAnExe = Path.Combine(directory.Path, "Manual.pdf");
+        foreach (var file in new[] { paints, pit, gone, notAnExe }) File.WriteAllText(file, "x");
+
+        CreateShortcut(Path.Combine(publisher, "Trading Paints.lnk"), paints, "--tray", directory.Path);
+        CreateShortcut(Path.Combine(root, "Pit House.lnk"), pit);
+        // The same executable reached by a longer name: one application, not two.
+        CreateShortcut(Path.Combine(nested, "Pit House (64-bit).lnk"), pit);
+        // Never a thing a profile launches.
+        CreateShortcut(Path.Combine(publisher, "Uninstall Trading Paints.lnk"), paints);
+        CreateShortcut(Path.Combine(root, "Trading Paints Help.lnk"), paints);
+        // A target that no longer exists, and one that is not a program at all.
+        CreateShortcut(Path.Combine(root, "Removed App.lnk"), gone);
+        File.Delete(gone);
+        CreateShortcut(Path.Combine(root, "Manual.lnk"), notAnExe);
+
+        var found = InstalledApplicationCatalog.Scan([root]);
+        var names = found.Select(app => app.Name).ToList();
+
+        Assert(names.Count == 2, $"Expected two applications, got: {string.Join(", ", names)}");
+        // Ordered by name, so the list reads the way the Start menu reads.
+        Assert(names[0] == "Pit House" && names[1] == "Trading Paints",
+            $"Unexpected order: {string.Join(", ", names)}");
+
+        var trading = found.Single(app => app.Name == "Trading Paints");
+        Assert(trading.Path == paints, $"Wrong target: {trading.Path}");
+        Assert(trading.Arguments == "--tray", $"Shortcut arguments were lost: '{trading.Arguments}'");
+        Assert(trading.WorkingDirectory == directory.Path, $"Working directory was lost: '{trading.WorkingDirectory}'");
+        Assert(trading.Group == "Rhinode LLC", $"The publisher folder should be the group; got '{trading.Group}'.");
+
+        // The shorter of two names for the same executable, and no group because
+        // it sits at the top level.
+        var pitHouse = found.Single(app => app.Name == "Pit House");
+        Assert(pitHouse.Group.Length == 0, $"A top-level shortcut should have no group; got '{pitHouse.Group}'.");
+
+        Assert(!names.Any(name => name.Contains("Uninstall", StringComparison.OrdinalIgnoreCase)),
+            "An uninstaller is not an application to launch.");
+        Assert(!names.Any(name => name.Contains("Help", StringComparison.OrdinalIgnoreCase)),
+            "A help link is not an application to launch.");
+        Assert(!names.Contains("Removed App"), "A shortcut whose target is gone must not be offered.");
+        Assert(!names.Contains("Manual"), "A shortcut to a document is not an application.");
+
+        // A folder that does not exist is normal: not every machine has both.
+        Assert(InstalledApplicationCatalog.Scan([Path.Combine(directory.Path, "absent")]).Count == 0,
+            "Scanning a missing folder should find nothing rather than fail.");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Searching has to find an application by any of the things the user might
+    /// remember about it, and by more than one of them at once.
+    /// </summary>
+    private static Task TestInstalledCatalogSearchAsync()
+    {
+        var app = new InstalledApplication("MOZA Pit House",
+            Path.Combine("C:", "Program Files (x86)", "MOZA Pit House", "MOZA Pit House.exe"),
+            string.Empty, string.Empty, "MOZA Racing");
+
+        Assert(InstalledApplicationCatalog.Matches(app, string.Empty), "An empty search should match everything.");
+        Assert(InstalledApplicationCatalog.Matches(app, "moza"), "Searching by name should match.");
+        Assert(InstalledApplicationCatalog.Matches(app, "PIT house"), "Searching should ignore case.");
+        Assert(InstalledApplicationCatalog.Matches(app, "racing"), "Searching by publisher should match.");
+        Assert(InstalledApplicationCatalog.Matches(app, "program files"), "Searching by path should match.");
+        // Words are matched separately, so a half-remembered name still finds it.
+        Assert(InstalledApplicationCatalog.Matches(app, "house moza"), "Words in any order should match.");
+        Assert(InstalledApplicationCatalog.Matches(app, "moza racing house"), "Words from name and publisher should match.");
+        Assert(!InstalledApplicationCatalog.Matches(app, "iracing"), "An unrelated search must not match.");
+        Assert(!InstalledApplicationCatalog.Matches(app, "moza iracing"), "One missing word should reject the entry.");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The picker is what the user actually sees, so the list, the search box, and
+    /// the state of the Add button are rendered rather than assumed.
+    /// </summary>
+    private static Task TestApplicationPickerRendersAsync()
+    {
+        var catalog = new List<InstalledApplication>
+        {
+            new("MOZA Pit House", Path.Combine("C:", "moza", "MOZA Pit House.exe"), string.Empty, string.Empty, "MOZA Racing"),
+            new("Trading Paints", Path.Combine("C:", "paints", "Trading Paints.exe"), string.Empty, string.Empty, "Rhinode LLC"),
+            new("Visual Studio Code", Path.Combine("C:", "code", "Code.exe"), string.Empty, string.Empty, string.Empty)
+        };
+
+        var rendered = new List<string>();
+        var filtered = new List<string>();
+        var addEnabledAtRest = false;
+        var addLabel = string.Empty;
+        var chosen = new List<string>();
+
+        OnUiThread(() =>
+        {
+            var window = new ApplicationPickerWindow(catalog)
+            {
+                ShowActivated = false,
+                Opacity = 0,
+                WindowStartupLocation = System.Windows.WindowStartupLocation.Manual,
+                Left = -32000,
+                Top = -32000
+            };
+            try
+            {
+                window.Show();
+                window.UpdateLayout();
+                CollectText(window, rendered);
+
+                var list = (System.Windows.Controls.ListBox)window.FindName("ResultList");
+                var search = (System.Windows.Controls.TextBox)window.FindName("SearchBox");
+                var add = (System.Windows.Controls.Button)window.FindName("AddButton");
+
+                // The first result is selected, so Enter works without touching
+                // the mouse.
+                addEnabledAtRest = add.IsEnabled;
+
+                search.Text = "paints";
+                window.UpdateLayout();
+                filtered.AddRange(list.Items.OfType<ApplicationPickerWindow.PickerRow>().Select(row => row.Name));
+
+                search.Text = string.Empty;
+                window.UpdateLayout();
+                list.SelectAll();
+                window.UpdateLayout();
+                addLabel = add.Content as string ?? string.Empty;
+                chosen.AddRange(list.SelectedItems.OfType<ApplicationPickerWindow.PickerRow>().Select(row => row.Name));
+            }
+            finally { window.Close(); }
+        });
+
+        foreach (var name in new[] { "MOZA Pit House", "Trading Paints", "Visual Studio Code" })
+            Assert(rendered.Contains(name), $"'{name}' was not drawn. Rendered: {string.Join(" | ", rendered)}");
+        Assert(rendered.Any(text => text.Contains("MOZA Racing", StringComparison.Ordinal)),
+            "The publisher should be shown so two similar entries can be told apart.");
+
+        Assert(addEnabledAtRest, "The first result should be selected, so Add works straight away.");
+        Assert(filtered is ["Trading Paints"], $"Searching did not filter: {string.Join(", ", filtered)}");
+        Assert(chosen.Count == 3, $"The list should allow choosing several; got {chosen.Count}.");
+        Assert(addLabel.Contains('3'), $"The button should say how many will be added; it said '{addLabel}'.");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Creates a real Windows shortcut, the same way an installer does.
+    /// </summary>
+    private static void CreateShortcut(string shortcutPath, string target, string arguments = "",
+        string workingDirectory = "")
+    {
+        var shellType = Type.GetTypeFromProgID("WScript.Shell")
+            ?? throw new InvalidOperationException("WScript.Shell is unavailable.");
+        var shell = Activator.CreateInstance(shellType)
+            ?? throw new InvalidOperationException("WScript.Shell could not be created.");
+        object? shortcut = null;
+        try
+        {
+            shortcut = shellType.InvokeMember("CreateShortcut", System.Reflection.BindingFlags.InvokeMethod,
+                null, shell, [shortcutPath]);
+            if (shortcut is null) throw new InvalidOperationException("The shortcut could not be created.");
+
+            var type = shortcut.GetType();
+            void Set(string name, string value) => type.InvokeMember(name,
+                System.Reflection.BindingFlags.SetProperty, null, shortcut, [value]);
+
+            Set("TargetPath", target);
+            if (arguments.Length > 0) Set("Arguments", arguments);
+            if (workingDirectory.Length > 0) Set("WorkingDirectory", workingDirectory);
+            type.InvokeMember("Save", System.Reflection.BindingFlags.InvokeMethod, null, shortcut, null);
+        }
+        finally
+        {
+            if (shortcut is not null) System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shortcut);
+            System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shell);
+        }
     }
 
     private static Task TestApplicationDefaultsAsync()

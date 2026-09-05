@@ -137,16 +137,32 @@ public sealed class LaunchTargetResolver
         return false;
     }
 
-    private static string? TryResolveShellLink(string shortcutPath)
+    private static string? TryResolveShellLink(string shortcutPath) => ReadShortcut(shortcutPath)?.Target;
+
+    /// <summary>
+    /// Reads what a Windows shortcut points at, without launching it. Null when
+    /// the shortcut cannot be read or points at something that is no longer
+    /// there.
+    /// </summary>
+    public static ShortcutTarget? ReadShortcut(string shortcutPath)
     {
         try
         {
             var link = (IShellLinkW)(object)new ShellLink();
             ((IPersistFile)link).Load(shortcutPath, 0);
+
             var target = new StringBuilder(32768);
             link.GetPath(target, target.Capacity, IntPtr.Zero, 0);
             var result = Environment.ExpandEnvironmentVariables(target.ToString());
-            return File.Exists(result) ? Path.GetFullPath(result) : null;
+            if (!File.Exists(result)) return null;
+
+            var arguments = new StringBuilder(32768);
+            link.GetArguments(arguments, arguments.Capacity);
+            var workingDirectory = new StringBuilder(32768);
+            link.GetWorkingDirectory(workingDirectory, workingDirectory.Capacity);
+
+            return new ShortcutTarget(Path.GetFullPath(result), arguments.ToString().Trim(),
+                Environment.ExpandEnvironmentVariables(workingDirectory.ToString()).Trim());
         }
         catch (COMException) { return null; }
     }

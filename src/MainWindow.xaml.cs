@@ -926,12 +926,54 @@ public partial class MainWindow : Window
     private async void AddApplication_Click(object sender, RoutedEventArgs e)
     {
         if (SelectedProfile is not { } profile) return;
+
+        var picker = new ApplicationPickerWindow { Owner = this };
+        if (picker.ShowDialog() != true) return;
+
+        if (picker.WantsFileDialog)
+        {
+            // The dialog replaces the selected entry when there is one, and the
+            // point here is a new entry.
+            ApplicationsGrid.SelectedItem = null;
+            BrowseApplication_Click(sender, e);
+            return;
+        }
+
+        if (picker.WantsEmptyRow)
+        {
+            AddEmptyApplication(profile);
+            await SaveAsync();
+            return;
+        }
+
+        LaunchApplication? last = null;
+        foreach (var installed in picker.Chosen)
+        {
+            last = new LaunchApplication
+            {
+                Name = installed.Name,
+                Path = installed.Path,
+                Arguments = installed.Arguments,
+                WorkingDirectory = installed.WorkingDirectory
+            };
+            profile.Applications.Add(last);
+        }
+
+        if (last is null) return;
+        ApplicationsGrid.SelectedItem = last;
+        ApplicationsGrid.ScrollIntoView(last);
+        await SaveAsync();
+        StatusText.Text = picker.Chosen.Count == 1
+            ? $"Added {picker.Chosen[0].Name}."
+            : $"Added {picker.Chosen.Count} applications.";
+    }
+
+    private void AddEmptyApplication(SwitchProfile profile)
+    {
         var app = new LaunchApplication();
         profile.Applications.Add(app);
         ApplicationsGrid.SelectedItem = app;
         ApplicationsGrid.ScrollIntoView(app);
-        await SaveAsync();
-        RefreshApplicationIssues();
     }
 
     private async void RemoveApplication_Click(object sender, RoutedEventArgs e)
