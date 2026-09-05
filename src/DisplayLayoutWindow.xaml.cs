@@ -14,10 +14,20 @@ public partial class DisplayLayoutWindow : Window
 
     private readonly DisplaySnapshot? _snapshot;
 
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        WindowTheme.ApplyDarkTitleBar(new System.Windows.Interop.WindowInteropHelper(this).Handle);
+    }
+
     public DisplayLayoutWindow(string profileName, DisplaySnapshot? snapshot)
     {
         InitializeComponent();
         _snapshot = snapshot;
+
+        // Grow to fit the content so the layout is not behind a scrollbar, but
+        // never taller than the screen it has to open on.
+        MaxHeight = Math.Max(MinHeight, SystemParameters.WorkArea.Height - 60);
 
         TitleText.Text = $"{profileName} display layout";
 

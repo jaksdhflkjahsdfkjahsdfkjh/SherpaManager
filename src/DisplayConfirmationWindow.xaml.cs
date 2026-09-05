@@ -1,10 +1,18 @@
 using System.Windows;
+using System.Windows.Interop;
 using System.Windows.Threading;
+using SherpaManager.Services;
 
 namespace SherpaManager;
 
 public partial class DisplayConfirmationWindow : Window
 {
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        WindowTheme.ApplyDarkTitleBar(new WindowInteropHelper(this).Handle);
+    }
+
     public const int RollbackSeconds = 10;
 
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(250) };

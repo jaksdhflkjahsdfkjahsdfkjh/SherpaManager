@@ -19,7 +19,15 @@ Quality-of-life release.
   arrange, to scale and in their real positions, with the primary display
   highlighted and each panel labelled with its resolution, refresh rate, and
   rotation. Captured NVIDIA Surround grids are shown alongside: topology,
-  per-display mode, bezel correction, colour depth, and panel order.
+  per-display mode, bezel correction, colour depth, and panel order. The dialog
+  sizes itself to its content, up to the height of the screen, so the layout is
+  not hidden behind a scrollbar.
+
+### Fixed
+
+- Dialogs use the dark title bar instead of the Windows default white one. Only
+  the main window opted in, so every dialog Sherpa opened had a white caption
+  above dark content.
 
 - Global shortcuts. Click **Set shortcut** on a profile and press the keys you
   want, such as Ctrl+Alt+W; the combination is recorded as you press it rather

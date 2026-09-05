@@ -84,10 +84,8 @@ public partial class MainWindow : Window
     protected override void OnSourceInitialized(EventArgs e)
     {
         base.OnSourceInitialized(e);
-        var enabled = 1;
         var handle = new WindowInteropHelper(this).Handle;
-        if (DwmSetWindowAttribute(handle, 20, ref enabled, sizeof(int)) != 0)
-            DwmSetWindowAttribute(handle, 19, ref enabled, sizeof(int));
+        WindowTheme.ApplyDarkTitleBar(handle);
         _hotkeys.Attach(handle);
         ApplyHotkeys();
     }
@@ -1331,8 +1329,6 @@ public partial class MainWindow : Window
         System.Windows.MessageBox.Show(this, exception.Message, title, MessageBoxButton.OK, MessageBoxImage.Error);
     }
 
-    [DllImport("dwmapi.dll")]
-    private static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int valueSize);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

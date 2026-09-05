@@ -1,11 +1,18 @@
 using System.Windows;
 using Media = System.Windows.Media;
 using SherpaManager.Models;
+using SherpaManager.Services;
 
 namespace SherpaManager;
 
 public partial class ActivationPreflightWindow : Window
 {
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        WindowTheme.ApplyDarkTitleBar(new System.Windows.Interop.WindowInteropHelper(this).Handle);
+    }
+
     public bool Proceed { get; private set; }
     public bool SkipFuturePreviews => SkipPreviewCheckBox.IsChecked == true;
 
