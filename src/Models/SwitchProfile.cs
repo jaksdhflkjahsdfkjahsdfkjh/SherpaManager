@@ -115,6 +115,13 @@ public sealed class SwitchProfile : ObservableObject
                 ColorEncoding = target.ColorEncoding,
                 BitsPerColorChannel = target.BitsPerColorChannel
             }).ToList(),
+            Adapters = Display.Adapters.Select(adapter => new DisplayAdapterSnapshot
+            {
+                DevicePath = adapter.DevicePath,
+                VendorId = adapter.VendorId,
+                Vendor = adapter.Vendor,
+                DisplayCount = adapter.DisplayCount
+            }).ToList(),
             NvidiaSurround = Display.NvidiaSurround is null ? null : new NvidiaSurroundSnapshot
             {
                 ApiAvailable = Display.NvidiaSurround.ApiAvailable,

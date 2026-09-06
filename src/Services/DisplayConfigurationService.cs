@@ -91,12 +91,22 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
             ModeStructureSize = Marshal.SizeOf<DisplayConfigModeInfo>(),
             LogicalDisplayCount = screens.Length,
             ActiveTargets = paths.Select((path, index) => CreateTargetSnapshot(path, modes, index)).ToList(),
+            Adapters = CaptureAdapters(paths),
             NvidiaSurround = surround,
             Paths = paths.Select(ToBase64).ToList(),
             Modes = modes.Select(ToBase64).ToList()
         };
 
         CaptureAdvancedColor(snapshot);
+        if (snapshot.Adapters.Count > 1)
+            _diagnostics.Write("info", "display.adapters.multiple",
+                string.Join(", ", snapshot.Adapters.Select(adapter => adapter.Describe())),
+                new Dictionary<string, object?>
+                {
+                    ["adapterCount"] = snapshot.Adapters.Count,
+                    ["vendors"] = string.Join("+", snapshot.Adapters.Select(adapter =>
+                        string.IsNullOrEmpty(adapter.Vendor) ? $"0x{adapter.VendorId:X4}" : adapter.Vendor))
+                });
         return snapshot;
     }
 
@@ -1366,6 +1376,87 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
             MonitorDevicePath = string.Empty
         };
         return DisplayConfigGetDeviceInfo(ref name) == 0 ? name : null;
+    }
+
+    /// <summary>
+    /// PCI vendor ids for the graphics vendors worth naming, including the
+    /// virtual adapters a VM presents, since testing in one is often the only way
+    /// to reach a Windows version the developer does not own.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<uint, string> GraphicsVendors = new Dictionary<uint, string>
+    {
+        [0x10DE] = "NVIDIA",
+        [0x1002] = "AMD",
+        [0x1022] = "AMD",
+        [0x8086] = "Intel",
+        [0x1414] = "Microsoft",
+        [0x15AD] = "VMware",
+        [0x80EE] = "VirtualBox",
+        [0x1AB8] = "Parallels"
+    };
+
+    /// <summary>
+    /// Reads the PCI vendor out of an adapter device path.
+    /// </summary>
+    /// <remarks>
+    /// The path looks like <c>\\?\PCI#VEN_10DE&amp;DEV_1F06&amp;...</c>. Windows
+    /// does not offer the vendor as a field, and this is the same identifier
+    /// Device Manager shows, so it is read from the path rather than guessed from
+    /// the adapter's marketing name, which is localised and inconsistent.
+    ///
+    /// Paths that are not PCI at all — a remote desktop session, some virtual
+    /// adapters — simply have no vendor, which is a fact worth recording rather
+    /// than an error.
+    /// </remarks>
+    internal static (uint VendorId, string Vendor) ParseAdapterVendor(string devicePath)
+    {
+        if (string.IsNullOrWhiteSpace(devicePath)) return (0, string.Empty);
+
+        const string marker = "VEN_";
+        var start = devicePath.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (start < 0) return (0, string.Empty);
+
+        start += marker.Length;
+        // Vendor ids are four hex digits. Anything else is not one.
+        if (start + 4 > devicePath.Length) return (0, string.Empty);
+        var digits = devicePath.Substring(start, 4);
+        if (!uint.TryParse(digits, System.Globalization.NumberStyles.HexNumber,
+                System.Globalization.CultureInfo.InvariantCulture, out var vendorId))
+            return (0, string.Empty);
+
+        return (vendorId, GraphicsVendors.TryGetValue(vendorId, out var name) ? name : string.Empty);
+    }
+
+    /// <summary>
+    /// Lists the adapters actually driving the displays in this layout, one entry
+    /// each, with how many displays each is driving.
+    /// </summary>
+    private static List<DisplayAdapterSnapshot> CaptureAdapters(DisplayConfigPathInfo[] paths)
+    {
+        var counts = new Dictionary<string, DisplayAdapterSnapshot>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var path in paths)
+        {
+            var devicePath = GetAdapterDevicePath(path.TargetInfo.AdapterId);
+            if (counts.TryGetValue(devicePath, out var existing))
+            {
+                existing.DisplayCount++;
+                continue;
+            }
+
+            var (vendorId, vendor) = ParseAdapterVendor(devicePath);
+            counts[devicePath] = new DisplayAdapterSnapshot
+            {
+                DevicePath = devicePath,
+                VendorId = vendorId,
+                Vendor = vendor,
+                DisplayCount = 1
+            };
+        }
+
+        return counts.Values.OrderByDescending(adapter => adapter.DisplayCount)
+            .ThenBy(adapter => adapter.Vendor, StringComparer.Ordinal)
+            .ToList();
     }
 
     private static string GetAdapterDevicePath(Luid adapterId)

@@ -10,6 +10,8 @@ namespace SherpaManager.Services;
 public sealed class ActivationPreflightService(IDisplayConfigurationService displays, IProcessService processes,
     IAudioDeviceService? audio = null)
 {
+    private const uint NvidiaVendorId = 0x10DE;
+
     public ActivationPreflight Build(ProfileDocument document, SwitchProfile target)
     {
         var preflight = new ActivationPreflight { ProfileName = target.Name };
@@ -172,6 +174,34 @@ public sealed class ActivationPreflightService(IDisplayConfigurationService disp
                 "If you do not keep the layout, Sherpa restores the previous one automatically.");
     }
 
+    /// <summary>
+    /// Reports when the screens are not on the NVIDIA card, so a Surround change
+    /// cannot do anything.
+    /// </summary>
+    /// <remarks>
+    /// Common on laptops with switchable graphics, and on desktops where the
+    /// processor's graphics are still enabled and a monitor is plugged into the
+    /// motherboard rather than the card. NVAPI reports the card in both cases, so
+    /// the profile looks fine right up until it fails.
+    /// </remarks>
+    /// <returns>The item to show, or null when there is nothing to say.</returns>
+    private static PreflightItem? DescribeGraphicsMismatch(DisplaySnapshot? current)
+    {
+        // Empty means the adapters were never recorded, which is not the same as
+        // there being no NVIDIA adapter.
+        if (current is null || current.Adapters.Count == 0) return null;
+        if (current.Adapters.Any(adapter => adapter.VendorId == NvidiaVendorId)) return null;
+
+        var driving = string.Join(" and ", current.Adapters.Select(adapter =>
+            string.IsNullOrEmpty(adapter.Vendor) ? "an unrecognised adapter" : adapter.Vendor + " graphics"));
+        var detail = $"The displays are being driven by {driving}, not by the NVIDIA card. " +
+                     "Surround only applies to displays connected to the NVIDIA card itself. " +
+                     "On a desktop, check the monitors are plugged into the card rather than the motherboard; " +
+                     "on a laptop with switchable graphics, Surround is usually unavailable.";
+        return new PreflightItem(PreflightSeverity.Problem,
+            "Surround cannot be changed: no displays are on the NVIDIA card.", detail);
+    }
+
     private static PreflightSection BuildSurroundSection(SwitchProfile target, DisplaySnapshot? current,
         string? captureFailure)
     {
@@ -210,6 +240,16 @@ public sealed class ActivationPreflightService(IDisplayConfigurationService disp
             section.Items.Add(new PreflightItem(PreflightSeverity.Caution,
                 $"Surround must be {verb}, but its current state could not be read.",
                 live.Description));
+            return section;
+        }
+
+        // NVAPI answers for the card whether or not the card is driving anything.
+        // On a machine with switchable or processor graphics the monitors can be
+        // on the other adapter, and the Surround change then fails at the display
+        // step with a bare driver error.
+        if (DescribeGraphicsMismatch(current) is { } mismatch)
+        {
+            section.Items.Add(mismatch);
             return section;
         }
 

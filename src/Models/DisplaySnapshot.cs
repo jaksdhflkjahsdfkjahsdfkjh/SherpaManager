@@ -13,6 +13,12 @@ public sealed class DisplaySnapshot
     public int ModeStructureSize { get; set; }
     public int LogicalDisplayCount { get; set; }
     public List<DisplayTargetSnapshot> ActiveTargets { get; set; } = [];
+
+    /// <summary>
+    /// The graphics adapters driving those displays. Empty in profiles captured
+    /// before Sherpa recorded them, which means unknown rather than none.
+    /// </summary>
+    public List<DisplayAdapterSnapshot> Adapters { get; set; } = [];
     public NvidiaSurroundSnapshot? NvidiaSurround { get; set; }
     public List<string> Paths { get; set; } = [];
     public List<string> Modes { get; set; } = [];

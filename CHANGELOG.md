@@ -34,6 +34,17 @@ Quality-of-life release.
   run of switches stays readable: purple when it succeeded, amber when it
   finished with warnings, red when it failed. The newest carries a badge, and
   each shows both the clock time and how long ago it was.
+- Machines with more than one graphics adapter are understood. The adapters
+  actually driving the displays are recorded with each layout, identified by
+  their PCI vendor, and a profile that manages NVIDIA Surround now says so up
+  front when none of the displays is on the NVIDIA card. NVAPI answers for the
+  card whether or not it is driving anything, so on a laptop with switchable
+  graphics, or a desktop with a monitor plugged into the motherboard rather than
+  the card, the profile used to look fine and then fail at the display step with
+  a bare driver error. A second adapter that drives no displays is not a problem
+  and is not reported as one. A layout captured on a multi-adapter machine also
+  records what it found in the diagnostics log, so a report from another PC says
+  what graphics it has.
 - HDR is captured with a profile and restored with it. Advanced colour is not
   carried by the display layout itself, so applying a layout previously said
   nothing about HDR and left it wherever Windows had put it. Each display's state

@@ -102,6 +102,9 @@ internal static class Program
             ("HDR follows the profile across changing hardware", TestAdvancedColorPlanAsync),
             ("Advanced colour flags are read at the right bits", TestAdvancedColorFlagsAsync),
             ("Advanced colour is readable from real displays", TestAdvancedColorReadsRealDisplaysAsync),
+            ("The graphics vendor is read from the adapter path", TestAdapterVendorParsingAsync),
+            ("Surround is refused when no display is on the NVIDIA card", TestHybridGraphicsPreviewAsync),
+            ("Adapters are read from the real machine", TestAdaptersReadFromRealHardwareAsync),
             ("Installed applications are read from the Start menu", TestInstalledCatalogAsync),
             ("Searching finds an app by name, publisher, or path", TestInstalledCatalogSearchAsync),
             ("The application picker lists, filters, and chooses", TestApplicationPickerRendersAsync)
@@ -509,6 +512,148 @@ internal static class Program
             // the two flag bits are swapped.
             Assert(target.AdvancedColorSupported || !target.AdvancedColorEnabled,
                 $"{target.FriendlyName} reports HDR enabled but unsupported, so the flag bits are misread.");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Reading the graphics vendor out of an adapter device path.
+    /// </summary>
+    /// <remarks>
+    /// The shapes here are real: the first is this machine's own adapter path,
+    /// and the rest are the forms Windows produces for virtual and non-PCI
+    /// adapters, which have to come back as "no vendor" rather than as a wrong
+    /// one.
+    /// </remarks>
+    private static Task TestAdapterVendorParsingAsync()
+    {
+        static (uint Id, string Name) Parse(string path) =>
+            DisplayConfigurationService.ParseAdapterVendor(path);
+
+        var nvidia = Parse(@"\\?\PCI#VEN_10DE&DEV_1F06&SUBSYS_C7531462&REV_A1#4&8FC2AB9&0&0009#{5B45201D-F2F2-4F3B-85BB-30FF1F953599}");
+        Assert(nvidia == (0x10DE, "NVIDIA"), $"Expected NVIDIA, got 0x{nvidia.Id:X4} '{nvidia.Name}'.");
+
+        // The processor graphics on this same machine, which drive no displays but
+        // would if a monitor were plugged into the motherboard.
+        var amd = Parse(@"\\?\PCI#VEN_1002&DEV_164E&SUBSYS_7E261462&REV_CB#4&16ADCFD2&0&0041#{5B45201D-F2F2-4F3B-85BB-30FF1F953599}");
+        Assert(amd == (0x1002, "AMD"), $"Expected AMD, got 0x{amd.Id:X4} '{amd.Name}'.");
+
+        Assert(Parse(@"\\?\PCI#VEN_8086&DEV_9BC4#...") == (0x8086, "Intel"), "Intel should be recognised.");
+
+        // Windows writes these paths in either case.
+        Assert(Parse(@"\\?\pci#ven_10de&dev_1f06#...") == (0x10DE, "NVIDIA"), "Parsing must ignore case.");
+
+        // A VM is the only way to reach a Windows version you do not own, so its
+        // adapters are worth naming too.
+        Assert(Parse(@"\\?\PCI#VEN_15AD&DEV_0405#...").Name == "VMware", "VMware should be recognised.");
+        Assert(Parse(@"\\?\PCI#VEN_1414&DEV_008E#...").Name == "Microsoft", "The Microsoft adapter should be recognised.");
+
+        // A real vendor id Sherpa has no name for: the id is still worth keeping.
+        var unknown = Parse(@"\\?\PCI#VEN_1AF4&DEV_1050#...");
+        Assert(unknown == (0x1AF4, string.Empty), $"An unknown vendor should keep its id; got 0x{unknown.Id:X4} '{unknown.Name}'.");
+
+        // Nothing to read: a remote session, and the LUID fallback the service
+        // uses when Windows will not name the adapter at all.
+        Assert(Parse(@"\\?\ROOT#BasicDisplay#0000#{...}") == (0u, string.Empty), "A non-PCI path has no vendor.");
+        Assert(Parse("00000000:0000C3F1") == (0u, string.Empty), "The LUID fallback has no vendor.");
+        Assert(Parse(string.Empty) == (0u, string.Empty), "An empty path has no vendor.");
+        Assert(Parse("VEN_") == (0u, string.Empty), "A truncated marker has no vendor.");
+        Assert(Parse("VEN_ZZZZ") == (0u, string.Empty), "Non-hex digits are not a vendor id.");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// A profile that manages Surround on a PC whose displays are not on the
+    /// NVIDIA card.
+    /// </summary>
+    /// <remarks>
+    /// The case this exists for cannot be produced on the development machine
+    /// without physically moving a cable, so the preview is driven with the
+    /// snapshot such a machine would produce. NVAPI answers for the card whether
+    /// or not it is driving anything, so without this the profile looks fine and
+    /// then fails at the display step with a bare driver error.
+    /// </remarks>
+    private static Task TestHybridGraphicsPreviewAsync()
+    {
+        static ActivationPreflight Build(List<DisplayAdapterSnapshot> adapters)
+        {
+            var (document, target, processes, displays) = PreviewFixture();
+            target.NvidiaSurroundMode = NvidiaSurroundMode.RequireEnabled;
+            displays.CurrentSnapshot = new DisplaySnapshot
+            {
+                ActiveTargets = [Monitor("side-1", "Dell P2419H", 1920, 1080)],
+                Adapters = adapters,
+                NvidiaSurround = new NvidiaSurroundSnapshot
+                {
+                    ApiAvailable = true,
+                    StatusKnown = true,
+                    HasConfiguredTopology = true,
+                    Enabled = false,
+                    Description = "Surround is off."
+                }
+            };
+            return new ActivationPreflightService(displays, processes).Build(document, target);
+        }
+
+        static DisplayAdapterSnapshot Adapter(string vendor, uint id, int displays) =>
+            new() { Vendor = vendor, VendorId = id, DisplayCount = displays, DevicePath = $"path-{id:X4}" };
+
+        // The screens are on the processor's graphics; the card is idle.
+        var onboard = Build([Adapter("AMD", 0x1002, 1)]);
+        var problem = onboard.AllItems.FirstOrDefault(item => item.Title.Contains("no displays are on the NVIDIA card",
+            StringComparison.OrdinalIgnoreCase));
+        Assert(problem is not null,
+            $"The mismatch was not reported. Items: {string.Join(" | ", onboard.AllItems.Select(i => i.Title))}");
+        Assert(problem!.Severity == PreflightSeverity.Problem, "It stops Surround working, so it is a problem.");
+
+        var detail = problem.Detail ?? string.Empty;
+        Assert(detail.Contains("AMD", StringComparison.Ordinal),
+            $"The detail should name what is driving the displays: {detail}");
+        Assert(detail.Contains("motherboard", StringComparison.OrdinalIgnoreCase),
+            "The detail should say what to actually check.");
+
+        static bool Reports(ActivationPreflight preflight) => preflight.AllItems.Any(item =>
+            item.Title.Contains("no displays are on the NVIDIA card", StringComparison.OrdinalIgnoreCase));
+
+        // The normal case: displays on the card, whatever else is installed.
+        Assert(!Reports(Build([Adapter("NVIDIA", 0x10DE, 3)])), "Displays on the card are not a mismatch.");
+
+        // Both adapters driving screens. The card can still do its part.
+        Assert(!Reports(Build([Adapter("NVIDIA", 0x10DE, 2), Adapter("Intel", 0x8086, 1)])),
+            "A second adapter alongside the card is not a mismatch.");
+
+        // Nothing recorded means unknown, not "no NVIDIA". Inventing a problem
+        // here would break every profile captured before adapters were recorded.
+        Assert(!Reports(Build([])), "An empty adapter list must not be read as having no NVIDIA card.");
+
+        // An adapter Sherpa cannot name is still not the NVIDIA card.
+        var unnamed = Build([Adapter(string.Empty, 0x1AF4, 1)]);
+        Assert(Reports(unnamed), "An unrecognised adapter driving the displays is still not the card.");
+        Assert(unnamed.AllItems.Any(item =>
+                item.Detail?.Contains("unrecognised", StringComparison.OrdinalIgnoreCase) == true),
+            "An adapter with no name should be described as unrecognised rather than left blank.");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The adapter inventory read from the machine actually running the tests.
+    /// </summary>
+    private static Task TestAdaptersReadFromRealHardwareAsync()
+    {
+        var snapshot = new DisplayConfigurationService().Capture();
+        Assert(snapshot.Adapters.Count > 0, "A machine with an active display has an adapter driving it.");
+        Assert(snapshot.Adapters.Sum(adapter => adapter.DisplayCount) == snapshot.ActiveTargets.Count,
+            "Every active display belongs to exactly one adapter.");
+
+        foreach (var adapter in snapshot.Adapters)
+        {
+            Assert(!string.IsNullOrWhiteSpace(adapter.DevicePath), "An adapter should be identifiable.");
+            Assert(adapter.DisplayCount > 0, "An adapter with no displays does not belong in the list.");
+            // The path either carries a vendor id or it does not; what must not
+            // happen is a name without the id it came from.
+            Assert(adapter.Vendor.Length == 0 || adapter.VendorId != 0,
+                $"'{adapter.Vendor}' was named without a vendor id, from {adapter.DevicePath}.");
         }
 
         return Task.CompletedTask;
