@@ -27,4 +27,34 @@ public sealed class DisplayTargetSnapshot
     public uint TargetVSyncNumerator { get; set; }
     public uint TargetVSyncDenominator { get; set; }
     public bool BoostRefreshRate { get; set; }
+
+    /// <summary>
+    /// Whether advanced colour was read when this profile was captured.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="AdvancedColorEnabled"/> being false, and the
+    /// distinction matters: a profile saved before Sherpa understood HDR would
+    /// otherwise look like "HDR was off", and restoring it would switch a
+    /// monitor's HDR off for someone who never asked.
+    /// </remarks>
+    public bool AdvancedColorCaptured { get; set; }
+
+    /// <summary>Whether the display and driver offered advanced colour at capture time.</summary>
+    public bool AdvancedColorSupported { get; set; }
+
+    /// <summary>Whether HDR was on for this display when the profile was captured.</summary>
+    public bool AdvancedColorEnabled { get; set; }
+
+    /// <summary>
+    /// Set when Windows itself is holding advanced colour off, for instance
+    /// because the mode in use cannot carry it. Recorded so a profile that cannot
+    /// restore HDR can say why rather than silently doing nothing.
+    /// </summary>
+    public bool AdvancedColorForceDisabled { get; set; }
+
+    /// <summary>DISPLAYCONFIG_COLOR_ENCODING, kept for the layout preview and diagnostics.</summary>
+    public uint ColorEncoding { get; set; }
+
+    /// <summary>Bits per colour channel, kept for the layout preview and diagnostics.</summary>
+    public uint BitsPerColorChannel { get; set; }
 }

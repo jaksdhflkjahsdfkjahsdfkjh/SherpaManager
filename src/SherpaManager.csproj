@@ -22,6 +22,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The test project drives internal helpers directly rather than through
+         reflection, which keeps record and tuple shapes checked by the compiler. -->
+    <InternalsVisibleTo Include="SherpaManager.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Resource Include="Assets\SherpaManager.ico" />
     <Resource Include="Assets\SherpaManager.png" />
   </ItemGroup>

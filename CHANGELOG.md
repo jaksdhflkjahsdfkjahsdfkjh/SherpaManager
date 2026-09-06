@@ -34,6 +34,16 @@ Quality-of-life release.
   run of switches stays readable: purple when it succeeded, amber when it
   finished with warnings, red when it failed. The newest carries a badge, and
   each shows both the clock time and how long ago it was.
+- HDR is captured with a profile and restored with it. Advanced colour is not
+  carried by the display layout itself, so applying a layout previously said
+  nothing about HDR and left it wherever Windows had put it. Each display's state
+  is now recorded at capture and put back once the layout has settled, matched by
+  monitor device path rather than by the adapter ids the profile was saved with.
+  A profile saved before this existed says nothing about HDR rather than saying
+  it was off, so it never switches HDR off for a display someone set up by hand.
+  A display that cannot do HDR, a driver that will not answer, and a Windows too
+  old to know the request are all reported as warnings at most, and never fail a
+  display change that otherwise worked.
 - **+ Add app** now opens a searchable list of the applications installed on
   this PC, read from the Start menu the way Windows reads it, with icons and the
   publisher each one came from. Type to filter by name, publisher, or path;

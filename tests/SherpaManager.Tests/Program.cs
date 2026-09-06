@@ -99,6 +99,9 @@ internal static class Program
             ("Unusable applications are flagged in the editor", TestApplicationIssuesAsync),
             ("Editor flags match what the activation preview reports", TestApplicationIssuesMatchPreviewAsync),
             ("Tooltips use the Sherpa theme", TestToolTipThemedAsync),
+            ("HDR follows the profile across changing hardware", TestAdvancedColorPlanAsync),
+            ("Advanced colour flags are read at the right bits", TestAdvancedColorFlagsAsync),
+            ("Advanced colour is readable from real displays", TestAdvancedColorReadsRealDisplaysAsync),
             ("Installed applications are read from the Start menu", TestInstalledCatalogAsync),
             ("Searching finds an app by name, publisher, or path", TestInstalledCatalogSearchAsync),
             ("The application picker lists, filters, and chooses", TestApplicationPickerRendersAsync)
@@ -329,6 +332,186 @@ internal static class Program
             if (shortcut is not null) System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shortcut);
             System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shell);
         }
+    }
+
+    /// <summary>
+    /// The rules that decide what happens to HDR when a profile meets hardware it
+    /// was not captured on.
+    /// </summary>
+    /// <remarks>
+    /// Written on a machine with no HDR display, which is exactly why the decision
+    /// is separated from the Windows call: the call can only be checked here for
+    /// not failing, but the rules are what turn someone's HDR off by mistake.
+    /// </remarks>
+    private static Task TestAdvancedColorPlanAsync()
+    {
+        const string port = @"\\?\DISPLAY#AUS2421#5&2b36889e&0&UID4352";
+
+        static DisplayTargetSnapshot Saved(bool captured, bool supported, bool enabled) => new()
+        {
+            FriendlyName = "OLED ultrawide",
+            MonitorDevicePath = port,
+            // Deliberately stale: the ids a profile was saved with are not the ids
+            // it comes back as, so nothing may match on them.
+            AdapterLowPart = 111,
+            AdapterHighPart = 222,
+            TargetId = 333,
+            AdvancedColorCaptured = captured,
+            AdvancedColorSupported = supported,
+            AdvancedColorEnabled = enabled
+        };
+
+        static Dictionary<string, (string Display, DisplayConfigurationService.LiveAdvancedColor State)>
+            Live(bool readable, bool supported, bool enabled, bool forceDisabled = false) => new()
+            {
+                [port] = ("OLED ultrawide",
+                    new DisplayConfigurationService.LiveAdvancedColor(readable, supported, enabled, forceDisabled))
+            };
+
+        // A profile saved before Sherpa read HDR knows nothing; it must not be
+        // read as "HDR was off" and switch off a display someone set up by hand.
+        var plan = DisplayConfigurationService.PlanAdvancedColor(
+            [Saved(captured: false, supported: false, enabled: false)], Live(true, true, true));
+        Assert(plan.Changes.Count == 0,
+            "A profile captured before Sherpa understood HDR must leave HDR alone.");
+        Assert(plan.Warnings.Count == 0, "Leaving HDR alone is not worth a warning.");
+
+        // The same rule on its own, with the other guards deliberately out of the
+        // way: not having read HDR is decisive by itself.
+        plan = DisplayConfigurationService.PlanAdvancedColor(
+            [Saved(captured: false, supported: true, enabled: false)], Live(true, true, enabled: true));
+        Assert(plan.Changes.Count == 0,
+            "Never having read a display's HDR must be enough on its own to leave it alone.");
+
+        // The ordinary cases, in both directions.
+        plan = DisplayConfigurationService.PlanAdvancedColor(
+            [Saved(true, true, enabled: true)], Live(true, true, enabled: false));
+        Assert(plan.Changes is [{ Enable: true }],
+            $"HDR should be turned back on; planned {plan.Changes.Count} changes.");
+        Assert(plan.Changes[0].Display == "OLED ultrawide", "The change should name the display.");
+
+        plan = DisplayConfigurationService.PlanAdvancedColor(
+            [Saved(true, true, enabled: false)], Live(true, true, enabled: true));
+        Assert(plan.Changes is [{ Enable: false }], "HDR should be turned off for a profile that had it off.");
+
+        // Already right: touching it would flicker the display for nothing.
+        plan = DisplayConfigurationService.PlanAdvancedColor(
+            [Saved(true, true, enabled: true)], Live(true, true, enabled: true));
+        Assert(plan.Changes.Count == 0 && plan.Warnings.Count == 0,
+            "A display already in the right state should be left alone.");
+
+        // The profile moved to another PC, or the monitor was replaced by one that
+        // cannot do HDR. Ordinary, and not a warning.
+        plan = DisplayConfigurationService.PlanAdvancedColor(
+            [Saved(true, true, enabled: true)], Live(true, supported: false, enabled: false));
+        Assert(plan.Changes.Count == 0, "A display that cannot do HDR must not be asked to.");
+        Assert(plan.Warnings.Count == 0, "Hardware that cannot do HDR is not a failure.");
+
+        // Windows older than 1709, or a driver that refuses the request.
+        plan = DisplayConfigurationService.PlanAdvancedColor(
+            [Saved(true, true, enabled: true)], Live(readable: false, supported: false, enabled: false));
+        Assert(plan.Changes.Count == 0, "Nothing can be planned for a display Windows will not describe.");
+        Assert(plan.Warnings is [var unreadable] && unreadable.Contains("could not be read", StringComparison.Ordinal),
+            $"An unreadable display should say so. Warnings: {string.Join(" | ", plan.Warnings)}");
+
+        // Windows itself is holding HDR off, usually because the mode cannot carry
+        // it. Saying why beats silently doing nothing.
+        plan = DisplayConfigurationService.PlanAdvancedColor(
+            [Saved(true, true, enabled: true)], Live(true, true, enabled: false, forceDisabled: true));
+        Assert(plan.Changes.Count == 0, "HDR that Windows is forcing off cannot be turned on.");
+        Assert(plan.Warnings is [var forced] && forced.Contains("holding HDR off", StringComparison.Ordinal),
+            $"A forced-off display should explain itself. Warnings: {string.Join(" | ", plan.Warnings)}");
+
+        // Turning HDR off is still allowed while Windows is forcing it off, since
+        // that is where the display already is.
+        plan = DisplayConfigurationService.PlanAdvancedColor(
+            [Saved(true, true, enabled: false)], Live(true, true, enabled: false, forceDisabled: true));
+        Assert(plan.Changes.Count == 0 && plan.Warnings.Count == 0,
+            "A display already off needs nothing, forced or not.");
+
+        // The monitor is not connected any more.
+        plan = DisplayConfigurationService.PlanAdvancedColor([Saved(true, true, enabled: true)],
+            new Dictionary<string, (string, DisplayConfigurationService.LiveAdvancedColor)>());
+        Assert(plan.Changes.Count == 0 && plan.Warnings.Count == 0,
+            "A display that is no longer attached is not a problem.");
+
+        // Matching is by monitor device path. The saved adapter and target ids are
+        // stale on purpose above, and every case so far matched anyway.
+        plan = DisplayConfigurationService.PlanAdvancedColor([Saved(true, true, enabled: true)],
+            new Dictionary<string, (string Display, DisplayConfigurationService.LiveAdvancedColor State)>
+            {
+                [@"\\?\DISPLAY#OTHER#1&abcdef&0&UID1"] =
+                    ("Some other panel", new DisplayConfigurationService.LiveAdvancedColor(true, true, false, false))
+            });
+        Assert(plan.Changes.Count == 0, "A different monitor must not inherit this profile's HDR setting.");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The order of the flags inside the advanced-colour bitfield.
+    /// </summary>
+    /// <remarks>
+    /// Every bit reads zero on a display without HDR, so hardware here cannot tell
+    /// a correct decoder from one with the bits transposed. This can.
+    /// </remarks>
+    private static Task TestAdvancedColorFlagsAsync()
+    {
+        var none = DisplayConfigurationService.DecodeAdvancedColorFlags(0);
+        Assert(!none.Supported && !none.Enabled && !none.ForceDisabled, "Zero means nothing is set.");
+        Assert(none.Readable, "A value that was read back is readable by definition.");
+
+        // Bit 0 alone: the display can do HDR, and it is off. This is the pairing a
+        // transposed decoder turns into "enabled but unsupported".
+        var supported = DisplayConfigurationService.DecodeAdvancedColorFlags(0b0001);
+        Assert(supported.Supported && !supported.Enabled,
+            "Bit 0 is advancedColorSupported; reading it as enabled would switch HDR on where it is not supported.");
+
+        var on = DisplayConfigurationService.DecodeAdvancedColorFlags(0b0011);
+        Assert(on.Supported && on.Enabled && !on.ForceDisabled, "Bits 0 and 1 are supported and enabled.");
+
+        // Bit 2 is wideColorEnforced, which Sherpa does not act on. Reading it as
+        // forceDisabled would make every wide-gamut display look blocked.
+        var wideColor = DisplayConfigurationService.DecodeAdvancedColorFlags(0b0101);
+        Assert(wideColor.Supported && !wideColor.ForceDisabled,
+            "Bit 2 is wideColorEnforced, not advancedColorForceDisabled.");
+
+        var forced = DisplayConfigurationService.DecodeAdvancedColorFlags(0b1001);
+        Assert(forced.Supported && !forced.Enabled && forced.ForceDisabled, "Bit 3 is advancedColorForceDisabled.");
+
+        // The upper bits are reserved and must not leak into any flag.
+        var reserved = DisplayConfigurationService.DecodeAdvancedColorFlags(0xFFFF_FFF0);
+        Assert(!reserved.Supported && !reserved.Enabled && !reserved.ForceDisabled,
+            "Reserved bits must not be read as flags.");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The advanced-colour request has to be one Windows accepts. A wrong struct
+    /// size or field order is rejected, so a real capture that comes back marked
+    /// as read is the evidence the layout is right.
+    /// </summary>
+    private static Task TestAdvancedColorReadsRealDisplaysAsync()
+    {
+        var snapshot = new DisplayConfigurationService().Capture();
+        Assert(snapshot.ActiveTargets.Count > 0, "The machine running the tests has no active display.");
+
+        foreach (var target in snapshot.ActiveTargets)
+        {
+            Assert(target.AdvancedColorCaptured,
+                $"Windows refused the advanced colour request for {target.FriendlyName}, " +
+                "which usually means the struct size or field order is wrong.");
+            // Reported by the same call, so implausible values would mean the
+            // fields are being read at the wrong offsets.
+            Assert(target.BitsPerColorChannel is > 0 and <= 16,
+                $"{target.FriendlyName} reported {target.BitsPerColorChannel} bits per channel.");
+            Assert(target.ColorEncoding <= 4, $"{target.FriendlyName} reported colour encoding {target.ColorEncoding}.");
+            // HDR cannot be on where it is not supported; that pairing would mean
+            // the two flag bits are swapped.
+            Assert(target.AdvancedColorSupported || !target.AdvancedColorEnabled,
+                $"{target.FriendlyName} reports HDR enabled but unsupported, so the flag bits are misread.");
+        }
+
+        return Task.CompletedTask;
     }
 
     private static Task TestApplicationDefaultsAsync()

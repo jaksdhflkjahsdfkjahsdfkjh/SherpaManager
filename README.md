@@ -9,6 +9,7 @@ Sherpa Manager is a Windows utility for switching a PC between work and sim-raci
 
 - Capture which monitors are enabled, including their positions, resolutions, orientations, refresh rates, and primary display.
 - Switch between topologies such as one work monitor and three sim-rig monitors; omitted monitors are disabled from the Windows desktop.
+- Capture and restore each display's HDR (advanced colour) state alongside the layout, matched by monitor rather than by adapter id.
 - Capture, validate, and restore an NVIDIA Surround grid through the official [NVAPI Mosaic interface](https://docs.nvidia.com/nvapi/group__mosaicapi.html), including panel order, bezel overlap, bezel-corrected mode selection, rotation, resolution, color depth, and refresh rate.
 - Validate monitor identities, verify the applied topology, and automatically roll back a failed display change.
 - Keep an on-disk emergency display snapshot and offer **Restore last** from the window and tray.

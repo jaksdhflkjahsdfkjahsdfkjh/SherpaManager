@@ -18,6 +18,10 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
     private const uint SdcUseSuppliedDisplayConfig = 0x00000020;
     private const uint SdcValidate = 0x00000040;
     private const uint SdcApply = 0x00000080;
+    // DISPLAYCONFIG_DEVICE_INFO_TYPE values for advanced colour, available from
+    // Windows 10 1709. Older builds simply fail the request.
+    private const uint GetAdvancedColorInfoType = 9;
+    private const uint SetAdvancedColorStateType = 10;
     private const uint SdcSaveToDatabase = 0x00000200;
     private const uint SdcAllowChanges = 0x00000400;
     private const uint SdcVirtualModeAware = 0x00008000;
@@ -77,7 +81,7 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
             _ => $"Windows: extend across {screens.Length} logical displays"
         };
 
-        return new DisplaySnapshot
+        var snapshot = new DisplaySnapshot
         {
             SnapshotVersion = 3,
             CapturedAtUtc = DateTime.UtcNow,
@@ -91,6 +95,9 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
             Paths = paths.Select(ToBase64).ToList(),
             Modes = modes.Select(ToBase64).ToList()
         };
+
+        CaptureAdvancedColor(snapshot);
+        return snapshot;
     }
 
     public Task<DisplayRestoreResult> RestoreAsync(DisplaySnapshot snapshot, NvidiaSurroundMode surroundMode,
@@ -189,6 +196,11 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
                 requireExactSemantics: true, cancellationToken);
             LogStage("layout.committed");
 
+            // Advanced colour rides outside the path and mode arrays, so putting
+            // the layout back does not put HDR back. This does, against the
+            // topology that actually settled.
+            var colorWarnings = ApplyAdvancedColor(requested, committed);
+
             CopyLayout(committed, requested);
             if (shouldConfirm)
             {
@@ -202,10 +214,11 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
                 ["usedAdjustedModes"] = usedAdjustedModes,
                 ["confirmationShown"] = shouldConfirm
             }, totalDuration.ElapsedMilliseconds);
-            return new DisplayRestoreResult(usedAdjustedModes,
-                usedAdjustedModes
-                    ? "Display layout applied and verified. Windows selected compatible mode values, which Sherpa saved for this profile."
-                    : "Display layout applied, verified, and saved.");
+            var message = usedAdjustedModes
+                ? "Display layout applied and verified. Windows selected compatible mode values, which Sherpa saved for this profile."
+                : "Display layout applied, verified, and saved.";
+            if (colorWarnings.Count > 0) message += " " + string.Join(" ", colorWarnings);
+            return new DisplayRestoreResult(usedAdjustedModes, message);
         }
         catch (Exception failure)
         {
@@ -1133,6 +1146,211 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
         destination.Modes = source.Modes;
     }
 
+    /// <summary>
+    /// Reads the advanced colour (HDR) state of one display.
+    /// </summary>
+    /// <remarks>
+    /// Advanced colour is not carried by the path and mode arrays, so applying a
+    /// layout says nothing about it. It has to be read and written separately,
+    /// through the same device-info calls used for monitor names.
+    /// </remarks>
+    private static DisplayConfigAdvancedColorInfo? GetAdvancedColorInfo(Luid adapterId, uint targetId)
+    {
+        var info = new DisplayConfigAdvancedColorInfo
+        {
+            Header = new DisplayConfigDeviceInfoHeader
+            {
+                Type = GetAdvancedColorInfoType,
+                Size = (uint)Marshal.SizeOf<DisplayConfigAdvancedColorInfo>(),
+                AdapterId = adapterId,
+                Id = targetId
+            }
+        };
+        // Windows before 1709 does not know this request, and some drivers refuse
+        // it. Either way the answer is "nothing to say about HDR".
+        return DisplayConfigGetDeviceInfo(ref info) == 0 ? info : null;
+    }
+
+    private static Luid AdapterOf(DisplayTargetSnapshot target) =>
+        new() { LowPart = target.AdapterLowPart, HighPart = target.AdapterHighPart };
+
+    /// <summary>Records the advanced colour state of every captured display.</summary>
+    private static void CaptureAdvancedColor(DisplaySnapshot snapshot)
+    {
+        foreach (var target in snapshot.ActiveTargets)
+        {
+            if (GetAdvancedColorInfo(AdapterOf(target), target.TargetId) is not { } info) continue;
+
+            var flags = info.Flags;
+            target.AdvancedColorCaptured = true;
+            target.AdvancedColorSupported = flags.Supported;
+            target.AdvancedColorEnabled = flags.Enabled;
+            target.AdvancedColorForceDisabled = flags.ForceDisabled;
+            target.ColorEncoding = info.ColorEncoding;
+            target.BitsPerColorChannel = info.BitsPerColorChannel;
+        }
+    }
+
+    /// <summary>The live advanced colour of one display, as Windows reports it.</summary>
+    /// <param name="Readable">
+    /// False when Windows would not answer at all, which is normal before Windows
+    /// 10 1709 and on drivers that refuse the request.
+    /// </param>
+    internal readonly record struct LiveAdvancedColor(bool Readable, bool Supported, bool Enabled, bool ForceDisabled);
+
+    /// <summary>
+    /// Splits the bitfield the advanced colour request returns.
+    /// </summary>
+    /// <remarks>
+    /// The native struct packs four one-bit flags into a word, in this order:
+    /// advancedColorSupported, advancedColorEnabled, wideColorEnforced,
+    /// advancedColorForceDisabled. Getting the order wrong is invisible on a
+    /// display without HDR, where every bit is zero, so the order is pinned here
+    /// rather than inferred from hardware.
+    /// </remarks>
+    internal static LiveAdvancedColor DecodeAdvancedColorFlags(uint value) =>
+        new(Readable: true,
+            Supported: (value & 0x1) != 0,
+            Enabled: (value & 0x2) != 0,
+            ForceDisabled: (value & 0x8) != 0);
+
+    /// <summary>One display whose advanced colour has to be changed.</summary>
+    internal sealed record AdvancedColorChange(string MonitorDevicePath, string Display, bool Enable);
+
+    internal sealed record AdvancedColorPlan(
+        IReadOnlyList<AdvancedColorChange> Changes,
+        IReadOnlyList<string> Warnings);
+
+    /// <summary>
+    /// Decides what to do about each display's HDR, given what the profile
+    /// recorded and what the displays now say.
+    /// </summary>
+    /// <remarks>
+    /// Kept free of any Windows call so the rules can be tested on a machine with
+    /// no HDR display, which is the only kind of machine this was written on. The
+    /// rules exist because a profile outlives the hardware it was captured on:
+    /// monitors get replaced, profiles get copied between PCs, and a profile saved
+    /// before Sherpa read HDR at all knows nothing rather than knowing "off".
+    /// </remarks>
+    /// <param name="saved">What the profile recorded, per display.</param>
+    /// <param name="live">The settled displays, keyed by monitor device path.</param>
+    internal static AdvancedColorPlan PlanAdvancedColor(
+        IReadOnlyList<DisplayTargetSnapshot> saved,
+        IReadOnlyDictionary<string, (string Display, LiveAdvancedColor State)> live)
+    {
+        var changes = new List<AdvancedColorChange>();
+        var warnings = new List<string>();
+
+        foreach (var target in saved)
+        {
+            // Silence is not "off". A profile captured before Sherpa understood
+            // HDR must leave it alone rather than switch it off for someone.
+            if (!target.AdvancedColorCaptured) continue;
+            // The display could not do HDR when this was captured, so the profile
+            // has no opinion about it now.
+            if (!target.AdvancedColorSupported) continue;
+            if (string.IsNullOrWhiteSpace(target.MonitorDevicePath)) continue;
+            if (!live.TryGetValue(target.MonitorDevicePath, out var current)) continue;
+
+            var display = string.IsNullOrWhiteSpace(current.Display) ? target.FriendlyName : current.Display;
+
+            if (!current.State.Readable)
+            {
+                warnings.Add($"HDR could not be read back for {display}, so it was left as Windows set it.");
+                continue;
+            }
+
+            // A different monitor on the same port, or the same profile on another
+            // PC. Not a failure, and not worth a warning.
+            if (!current.State.Supported) continue;
+            if (current.State.Enabled == target.AdvancedColorEnabled) continue;
+
+            if (target.AdvancedColorEnabled && current.State.ForceDisabled)
+            {
+                warnings.Add($"Windows is holding HDR off for {display}, usually because the current mode cannot carry it.");
+                continue;
+            }
+
+            changes.Add(new AdvancedColorChange(target.MonitorDevicePath, display, target.AdvancedColorEnabled));
+        }
+
+        return new AdvancedColorPlan(changes, warnings);
+    }
+
+    /// <summary>
+    /// Puts each display's advanced colour back the way the profile recorded it,
+    /// once the layout has settled.
+    /// </summary>
+    /// <remarks>
+    /// Works from the settled snapshot rather than the requested one, and matches
+    /// displays by monitor device path, because the adapter and target ids a
+    /// profile was saved with are not the ones it comes back as.
+    ///
+    /// Never throws. A monitor that cannot take HDR, a driver that refuses the
+    /// call, and a Windows too old to know the request are all ordinary, and none
+    /// of them is a reason to fail a display change that already worked.
+    /// </remarks>
+    /// <returns>What could not be done, for the caller to report.</returns>
+    private List<string> ApplyAdvancedColor(DisplaySnapshot requested, DisplaySnapshot settled)
+    {
+        var live = new Dictionary<string, (string Display, LiveAdvancedColor State)>(StringComparer.OrdinalIgnoreCase);
+        var routes = new Dictionary<string, (Luid Adapter, uint TargetId)>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var target in settled.ActiveTargets)
+        {
+            if (string.IsNullOrWhiteSpace(target.MonitorDevicePath)) continue;
+
+            var adapter = AdapterOf(target);
+            routes[target.MonitorDevicePath] = (adapter, target.TargetId);
+            var info = GetAdvancedColorInfo(adapter, target.TargetId);
+            live[target.MonitorDevicePath] = (target.FriendlyName,
+                info is { } value ? value.Flags : new LiveAdvancedColor(false, false, false, false));
+        }
+
+        var plan = PlanAdvancedColor(requested.ActiveTargets, live);
+        var warnings = plan.Warnings.ToList();
+
+        foreach (var change in plan.Changes)
+        {
+            if (!routes.TryGetValue(change.MonitorDevicePath, out var route)) continue;
+
+            var state = new DisplayConfigSetAdvancedColorState
+            {
+                Header = new DisplayConfigDeviceInfoHeader
+                {
+                    Type = SetAdvancedColorStateType,
+                    Size = (uint)Marshal.SizeOf<DisplayConfigSetAdvancedColorState>(),
+                    AdapterId = route.Adapter,
+                    Id = route.TargetId
+                },
+                Value = change.Enable ? 1u : 0u
+            };
+
+            int result;
+            try { result = DisplayConfigSetDeviceInfo(ref state); }
+            catch (Exception exception)
+            {
+                _diagnostics.Error("display.hdr.exception", exception);
+                warnings.Add($"HDR could not be changed for {change.Display}: {exception.Message}");
+                continue;
+            }
+
+            _diagnostics.Write(result == 0 ? "info" : "warning", "display.hdr.applied",
+                data: new Dictionary<string, object?>
+                {
+                    ["display"] = change.Display,
+                    ["enabled"] = change.Enable,
+                    ["win32Code"] = result
+                });
+
+            if (result != 0)
+                warnings.Add(
+                    $"HDR could not be turned {(change.Enable ? "on" : "off")} for {change.Display} (Windows error {result}).");
+        }
+
+        return warnings;
+    }
+
     private static DisplayConfigTargetDeviceName? GetTargetDeviceName(Luid adapterId, uint targetId)
     {
         var name = new DisplayConfigTargetDeviceName
@@ -1462,6 +1680,35 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
         public uint Height;
         public uint PixelFormat;
         public PointL Position;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern int DisplayConfigGetDeviceInfo(ref DisplayConfigAdvancedColorInfo requestPacket);
+
+    [DllImport("user32.dll")]
+    private static extern int DisplayConfigSetDeviceInfo(ref DisplayConfigSetAdvancedColorState requestPacket);
+
+    /// <summary>
+    /// DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO. The four flags are a bitfield in the
+    /// native struct, so they are read out of one word here.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct DisplayConfigAdvancedColorInfo
+    {
+        public DisplayConfigDeviceInfoHeader Header;
+        public uint Value;
+        public uint ColorEncoding;
+        public uint BitsPerColorChannel;
+
+        public LiveAdvancedColor Flags => DecodeAdvancedColorFlags(Value);
+    }
+
+    /// <summary>DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE, whose only flag is bit 0.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct DisplayConfigSetAdvancedColorState
+    {
+        public DisplayConfigDeviceInfoHeader Header;
+        public uint Value;
     }
 
     [StructLayout(LayoutKind.Sequential)]

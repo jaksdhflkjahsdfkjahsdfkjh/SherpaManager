@@ -107,7 +107,13 @@ public sealed class SwitchProfile : ObservableObject
                 TargetActiveHeight = target.TargetActiveHeight,
                 TargetVSyncNumerator = target.TargetVSyncNumerator,
                 TargetVSyncDenominator = target.TargetVSyncDenominator,
-                BoostRefreshRate = target.BoostRefreshRate
+                BoostRefreshRate = target.BoostRefreshRate,
+                AdvancedColorCaptured = target.AdvancedColorCaptured,
+                AdvancedColorSupported = target.AdvancedColorSupported,
+                AdvancedColorEnabled = target.AdvancedColorEnabled,
+                AdvancedColorForceDisabled = target.AdvancedColorForceDisabled,
+                ColorEncoding = target.ColorEncoding,
+                BitsPerColorChannel = target.BitsPerColorChannel
             }).ToList(),
             NvidiaSurround = Display.NvidiaSurround is null ? null : new NvidiaSurroundSnapshot
             {
