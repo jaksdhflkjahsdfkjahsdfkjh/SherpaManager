@@ -135,7 +135,7 @@ If the profile also changes displays, Sherpa waits up to 15 seconds for the chos
 
 If the device never appears, Sherpa leaves the output alone and reports a warning rather than failing the switch; a device you have chosen but unplugged is still listed in the editor so the choice is not silently discarded.
 
-Windows offers no supported way to change the default audio device. Sherpa uses the same undocumented interface every tool for this uses, which has been stable since Windows Vista but is not guaranteed; failures are reported rather than hidden.
+Windows offers no supported way to change the default audio device. Sherpa uses the same undocumented interface every tool for this uses, which has been stable since Windows Vista but is not guaranteed; failures are reported rather than hidden. Because a success code from an undocumented interface is not evidence, the default is read back after every change, and a switch Windows accepted but did not make is reported as a warning rather than passing as success.
 
 ## Adding applications
 

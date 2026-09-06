@@ -34,6 +34,15 @@ Quality-of-life release.
   run of switches stays readable: purple when it succeeded, amber when it
   finished with warnings, red when it failed. The newest carries a badge, and
   each shows both the clock time and how long ago it was.
+- An audio change that Windows accepts but does not make is now reported instead
+  of passing as a success. Setting a default audio device has no documented API,
+  so Sherpa calls one method at a fixed position in an interface Microsoft never
+  documented; a Windows version that shifts that layout would land the call on a
+  different method, which can return success having changed nothing. The default
+  is now read back after the change, and a switch that did not take is reported
+  as a warning naming the device still in use. It never fails the profile switch.
+  The diagnostics record the Windows build alongside it, since that is the first
+  thing worth knowing in a report from a machine the developer does not have.
 - A single very wide monitor is no longer described as possibly several monitors
   combined by the driver. The test for "wider than any one panel" sat at 3:1,
   which a 49-inch 32:9 monitor exceeds at 3.56, so its owner was told their one

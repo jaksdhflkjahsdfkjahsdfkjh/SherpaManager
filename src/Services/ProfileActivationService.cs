@@ -350,6 +350,27 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
 
             report($"Switching audio {kind} to {wanted}…");
             audio.SetDefaultDevice(deviceId);
+
+            // The interface that changes the default device is undocumented, so a
+            // success code from it is not evidence that anything happened. The
+            // only evidence is the default having actually changed.
+            if (!await ConfirmDefaultEndpointAsync(deviceId, current, cancellationToken))
+            {
+                var still = current()?.Name;
+                var ignored = $"Windows accepted the audio {kind} change to {wanted} but the default is still " +
+                              $"{(string.IsNullOrWhiteSpace(still) ? "unchanged" : still)}.";
+                report(ignored);
+                warnings.Add(ignored);
+                _diagnostics.Write("warning", "activation.audio.not_applied", ignored,
+                    new Dictionary<string, object?>
+                    {
+                        ["kind"] = kind,
+                        // The call is version-sensitive and undocumented, so the
+                        // build is the first thing worth knowing in a report from
+                        // a machine the developer does not have.
+                        ["osBuild"] = Environment.OSVersion.Version.Build
+                    });
+            }
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception exception)
@@ -362,6 +383,29 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
             var warning = $"Could not switch the audio {kind} to {wanted}: {exception.Message}";
             report(warning);
             warnings.Add(warning);
+        }
+    }
+
+    /// <summary>
+    /// Waits briefly for Windows to actually adopt the endpoint that was just
+    /// set.
+    /// </summary>
+    /// <remarks>
+    /// Short, because the change is normally immediate. It exists at all because
+    /// the only way to set a default endpoint is an interface Microsoft never
+    /// documented: nothing promises it keeps working, or that a success code from
+    /// it means what it used to. Reading the answer back is the one check that
+    /// holds on a Windows version this was never tried on.
+    /// </remarks>
+    private static async Task<bool> ConfirmDefaultEndpointAsync(string deviceId, Func<AudioDevice?> current,
+        CancellationToken cancellationToken)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(2);
+        while (true)
+        {
+            if (current()?.Id == deviceId) return true;
+            if (DateTime.UtcNow >= deadline) return false;
+            await Task.Delay(100, cancellationToken).ConfigureAwait(false);
         }
     }
 

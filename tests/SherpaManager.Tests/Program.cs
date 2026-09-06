@@ -73,6 +73,7 @@ internal static class Program
             ("Audio endpoints can be enumerated", TestAudioEnumerationAsync),
             ("Audio output switches before applications start", TestAudioAppliedBeforeLaunchAsync),
             ("A disconnected audio device warns without failing the switch", TestAudioMissingDeviceAsync),
+            ("An audio change that silently does nothing is reported", TestAudioSilentlyIgnoredAsync),
             ("Audio preview reports the pending change", TestAudioPreviewAsync),
             ("A monitor audio endpoint is waited for after the display comes up", TestAudioEndpointAppearsLateAsync),
             ("Audio input switches independently of output", TestAudioInputAsync),
@@ -2794,6 +2795,67 @@ internal static class Program
         Assert(audio.SetCalls == 0, "An audio device that is already default should not be set again.");
     }
 
+    /// <summary>
+    /// Windows accepting the audio change and not making it.
+    /// </summary>
+    /// <remarks>
+    /// The only way to set a default endpoint is IPolicyConfig, which Microsoft
+    /// never documented. Sherpa calls one method at a fixed position in that
+    /// interface; if a Windows version ever shifts the layout, the call lands on
+    /// a different method, which can return success having done nothing. That is
+    /// indistinguishable from working unless the answer is read back, and it
+    /// cannot be reproduced on the Windows this was written on, so it is
+    /// reproduced here instead.
+    /// </remarks>
+    private static async Task TestAudioSilentlyIgnoredAsync()
+    {
+        var processes = new FakeProcessService();
+        var displays = new FakeDisplayConfigurationService(processes.Events);
+        var audio = new FakeAudioDeviceService(processes.Events)
+        {
+            Devices =
+            {
+                new AudioDevice("speakers", "Desk speakers"),
+                new AudioDevice("headset", "Sim headset")
+            },
+            DefaultId = "speakers",
+            // Accepts the call, changes nothing.
+            IgnoreSet = true
+        };
+
+        var target = new SwitchProfile
+        {
+            Name = "iRacing",
+            AudioOutputDeviceId = "headset",
+            AudioOutputDeviceName = "Sim headset"
+        };
+        target.Applications.Add(new LaunchApplication { Name = "Sim", Path = @"C:\sim\app.exe" });
+        var document = new ProfileDocument { Profiles = { target }, Settings = { DisplaySettleDelayMs = 0 } };
+
+        var reports = new List<string>();
+        var activated = await new ProfileActivationService(displays, processes, null, audio)
+            .ActivateAsync(document, target, reports.Add);
+
+        Assert(audio.SetCalls == 1, $"The device should have been set once; it was set {audio.SetCalls} times.");
+        Assert(reports.Any(message => message.Contains("still Desk speakers", StringComparison.OrdinalIgnoreCase)),
+            $"The user was not told the change did not take. Reports: {string.Join(" | ", reports)}");
+
+        // Audio that will not change is worth saying, but it is not worth losing
+        // the display layout and the applications over.
+        Assert(activated, "A refused audio change must not fail the switch.");
+        Assert(processes.Launched.Count == 1, "Applications should still start.");
+
+        // And the ordinary case still passes silently, so the check is not simply
+        // warning every time.
+        audio.IgnoreSet = false;
+        audio.DefaultId = "speakers";
+        var second = new List<string>();
+        Assert(await new ProfileActivationService(displays, processes, null, audio)
+            .ActivateAsync(document, target, second.Add), "The switch should succeed when audio applies.");
+        Assert(!second.Any(message => message.Contains("still", StringComparison.OrdinalIgnoreCase)),
+            $"A change that worked must not be reported as ignored. Reports: {string.Join(" | ", second)}");
+    }
+
     private static async Task TestAudioMissingDeviceAsync()
     {
         var processes = new FakeProcessService();
@@ -4143,6 +4205,12 @@ internal static class Program
         public string? DefaultInputId { get; set; }
         public int SetCalls { get; set; }
         public bool ThrowOnSet { get; set; }
+
+        /// <summary>
+        /// Accept the call and change nothing, which is what setting a default
+        /// through a shifted vtable would look like: a success code, no effect.
+        /// </summary>
+        public bool IgnoreSet { get; set; }
         public bool Available { get; set; } = true;
 
         public bool IsAvailable => Available;
@@ -4174,6 +4242,7 @@ internal static class Program
             SetCalls++;
             if (ThrowOnSet) throw new InvalidOperationException("simulated audio failure");
             events.Add("audio:set:" + deviceId);
+            if (IgnoreSet) return;
             // Windows derives the direction from the endpoint itself.
             if (InputDevices.Any(device => device.Id == deviceId)) DefaultInputId = deviceId;
             else DefaultId = deviceId;
