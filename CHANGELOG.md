@@ -34,6 +34,13 @@ Quality-of-life release.
   run of switches stays readable: purple when it succeeded, amber when it
   finished with warnings, red when it failed. The newest carries a badge, and
   each shows both the clock time and how long ago it was.
+- A single very wide monitor is no longer described as possibly several monitors
+  combined by the driver. The test for "wider than any one panel" sat at 3:1,
+  which a 49-inch 32:9 monitor exceeds at 3.56, so its owner was told their one
+  monitor might be a combined layout. It now sits between the widest panel made
+  and three panels side by side, which are 5.33. Two panels combined are the same
+  shape as one 32:9 monitor and are still not detected; describing every 32:9
+  owner's monitor wrongly is the worse of the two mistakes.
 - Machines with more than one graphics adapter are understood. The adapters
   actually driving the displays are recorded with each layout, identified by
   their PCI vendor, and a profile that manages NVIDIA Surround now says so up

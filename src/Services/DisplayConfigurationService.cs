@@ -59,6 +59,26 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
 
     public NvidiaSurroundSnapshot GetNvidiaSurroundStatus() => _nvidiaSurround.GetStatus();
 
+    /// <summary>
+    /// The widest aspect ratio a single monitor is made in, above which a logical
+    /// display is more likely to be several panels combined by the driver.
+    /// </summary>
+    /// <remarks>
+    /// The widest panels sold are 32:9, or 3.56 — the 49-inch Samsung and LG
+    /// monitors that are common on sim rigs. Three panels side by side are 5.33.
+    /// The threshold sits between them, because at 3.0 a single super-ultrawide
+    /// was described to its owner as possibly several monitors.
+    ///
+    /// Two panels combined are 3.56, indistinguishable from one 32:9 monitor by
+    /// shape alone, so they are not detected. Calling every 32:9 owner's monitor a
+    /// combined layout is the worse of the two mistakes: it is wrong far more
+    /// often, and on hardware this application's users are likely to own.
+    /// </remarks>
+    private const double WidestSinglePanelRatio = 4.0;
+
+    internal static bool IsWiderThanAnyPanel(int width, int height) =>
+        height > 0 && width / (double)height >= WidestSinglePanelRatio;
+
     public DisplaySnapshot Capture()
     {
         var queryFlags = GetActiveQueryFlags();
@@ -67,16 +87,15 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
         var screenSummary = string.Join("  •  ", screens.Select(screen =>
             $"{screen.DeviceName.Replace(@"\\.\", string.Empty)} {screen.Bounds.Width}×{screen.Bounds.Height}{(screen.Primary ? " (primary)" : string.Empty)}"));
         var surround = _nvidiaSurround.GetStatus();
-        var likelyCombined = screens.Any(screen => screen.Bounds.Height > 0 &&
-                                                   screen.Bounds.Width / (double)screen.Bounds.Height >= 3.0);
+        var likelyCombined = screens.Any(screen => IsWiderThanAnyPanel(screen.Bounds.Width, screen.Bounds.Height));
         var surroundSummary = likelyCombined && !surround.HasConfiguredTopology
-            ? $"{surround.Description} A very wide logical display is active; it may be a combined GPU layout."
+            ? $"{surround.Description} One logical display is wider than any single monitor, so several may be combined by the driver."
             : surround.Description;
         var windowsMode = screens.Length switch
         {
             0 => "Windows: no active logical display",
             1 when surround.Enabled => "Windows: one logical NVIDIA Surround display",
-            1 when likelyCombined => "Windows: one logical wide display",
+            1 when likelyCombined => "Windows: one logical display wider than any single monitor",
             1 => $"Windows: show only on {screens[0].DeviceName.Replace(@"\\.\", string.Empty)}",
             _ => $"Windows: extend across {screens.Length} logical displays"
         };

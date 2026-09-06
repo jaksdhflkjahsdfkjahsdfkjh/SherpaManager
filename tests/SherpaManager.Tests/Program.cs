@@ -105,6 +105,7 @@ internal static class Program
             ("The graphics vendor is read from the adapter path", TestAdapterVendorParsingAsync),
             ("Surround is refused when no display is on the NVIDIA card", TestHybridGraphicsPreviewAsync),
             ("Adapters are read from the real machine", TestAdaptersReadFromRealHardwareAsync),
+            ("A single ultrawide is not mistaken for combined monitors", TestUltrawideIsNotCombinedAsync),
             ("Installed applications are read from the Start menu", TestInstalledCatalogAsync),
             ("Searching finds an app by name, publisher, or path", TestInstalledCatalogSearchAsync),
             ("The application picker lists, filters, and chooses", TestApplicationPickerRendersAsync)
@@ -656,6 +657,39 @@ internal static class Program
                 $"'{adapter.Vendor}' was named without a vendor id, from {adapter.DevicePath}.");
         }
 
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Telling one very wide monitor apart from several combined into one.
+    /// </summary>
+    /// <remarks>
+    /// The threshold used to sit at 3.0, which described a 49-inch 32:9 monitor
+    /// to its owner as possibly several monitors combined by the driver. Those
+    /// panels are staples of sim rigs, so the mistake would have been common.
+    /// </remarks>
+    private static Task TestUltrawideIsNotCombinedAsync()
+    {
+        static bool Wide(int width, int height) => DisplayConfigurationService.IsWiderThanAnyPanel(width, height);
+
+        // Single panels, up to the widest made. None of these is combined.
+        Assert(!Wide(1920, 1080), "16:9 is an ordinary monitor.");
+        Assert(!Wide(2560, 1440), "1440p is an ordinary monitor.");
+        Assert(!Wide(3440, 1440), "21:9 ultrawide is one monitor.");
+        Assert(!Wide(5120, 1440), "32:9 at 5120x1440, the Samsung Odyssey G9, is one monitor.");
+        Assert(!Wide(3840, 1080), "32:9 at 3840x1080 is one monitor.");
+
+        // Panels combined by the driver into a single logical display.
+        Assert(Wide(5760, 1080), "Three 1080p panels side by side are combined.");
+        Assert(Wide(7680, 1440), "Three 1440p panels side by side are combined.");
+        Assert(Wide(11520, 1080), "Six panels are combined.");
+
+        // Portrait triples, which sim rigs also use: 3 x 1080 wide, 1920 tall.
+        Assert(!Wide(3240, 1920), "Three portrait panels are not wider than the threshold, and are not claimed to be.");
+
+        // Nothing to divide by. A zero height must not throw or divide.
+        Assert(!Wide(1920, 0), "A display with no height cannot be measured.");
+        Assert(!Wide(0, 0), "An empty bounds cannot be measured.");
         return Task.CompletedTask;
     }
 
