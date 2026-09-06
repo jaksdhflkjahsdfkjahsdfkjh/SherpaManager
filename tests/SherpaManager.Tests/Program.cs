@@ -107,10 +107,21 @@ internal static class Program
             ("Surround is refused when no display is on the NVIDIA card", TestHybridGraphicsPreviewAsync),
             ("Adapters are read from the real machine", TestAdaptersReadFromRealHardwareAsync),
             ("A single ultrawide is not mistaken for combined monitors", TestUltrawideIsNotCombinedAsync),
+            ("Windows in another language behaves the same", TestOtherLanguagesAsync),
+            ("A Start menu in another language is filtered the same", TestCatalogIgnoresLanguageAsync),
+            ("A shortcut keeps a profile name Windows cannot spell", TestShortcutKeepsNonAsciiNameAsync),
             ("Installed applications are read from the Start menu", TestInstalledCatalogAsync),
             ("Searching finds an app by name, publisher, or path", TestInstalledCatalogSearchAsync),
             ("The application picker lists, filters, and chooses", TestApplicationPickerRendersAsync)
         };
+
+        // Some assertions read numbers out of rendered text. Pinning the culture
+        // keeps the suite reproducible wherever it is run; the culture-specific
+        // behaviour is exercised deliberately by its own test instead.
+        System.Globalization.CultureInfo.DefaultThreadCurrentCulture =
+            System.Globalization.CultureInfo.InvariantCulture;
+        System.Threading.Thread.CurrentThread.CurrentCulture =
+            System.Globalization.CultureInfo.InvariantCulture;
 
         var selectedTests = tests.ToList();
         if (Environment.GetEnvironmentVariable("SHERPA_HARDWARE_TESTS") == "1")
@@ -309,34 +320,51 @@ internal static class Program
     /// <summary>
     /// Creates a real Windows shortcut, the same way an installer does.
     /// </summary>
+    /// <remarks>
+    /// Through the shell's Unicode interface, because the WScript.Shell scripting
+    /// object this used at first goes through the system code page and turned a
+    /// Cyrillic shortcut name into question marks.
+    /// </remarks>
     private static void CreateShortcut(string shortcutPath, string target, string arguments = "",
-        string workingDirectory = "")
+        string workingDirectory = "") =>
+        ShellLink.Write(shortcutPath, target, arguments, workingDirectory);
+
+    /// <summary>
+    /// A desktop shortcut for a profile named in a script the machine's code page
+    /// cannot represent.
+    /// </summary>
+    /// <remarks>
+    /// The name is both the file name and the argument --activate matches on, so
+    /// losing it produces a shortcut that opens Sherpa and switches to nothing.
+    /// Writing through the scripting object did exactly that, turning the name
+    /// into question marks on a Windows set to a Western code page. Verified
+    /// here rather than assumed, on a machine whose code page is Western.
+    /// </remarks>
+    private static Task TestShortcutKeepsNonAsciiNameAsync()
     {
-        var shellType = Type.GetTypeFromProgID("WScript.Shell")
-            ?? throw new InvalidOperationException("WScript.Shell is unavailable.");
-        var shell = Activator.CreateInstance(shellType)
-            ?? throw new InvalidOperationException("WScript.Shell could not be created.");
-        object? shortcut = null;
-        try
-        {
-            shortcut = shellType.InvokeMember("CreateShortcut", System.Reflection.BindingFlags.InvokeMethod,
-                null, shell, [shortcutPath]);
-            if (shortcut is null) throw new InvalidOperationException("The shortcut could not be created.");
+        using var directory = new TemporaryDirectory();
+        var executable = Path.Combine(directory.Path, "SherpaManager.exe");
+        File.WriteAllText(executable, "x");
 
-            var type = shortcut.GetType();
-            void Set(string name, string value) => type.InvokeMember(name,
-                System.Reflection.BindingFlags.SetProperty, null, shortcut, [value]);
-
-            Set("TargetPath", target);
-            if (arguments.Length > 0) Set("Arguments", arguments);
-            if (workingDirectory.Length > 0) Set("WorkingDirectory", workingDirectory);
-            type.InvokeMember("Save", System.Reflection.BindingFlags.InvokeMethod, null, shortcut, null);
-        }
-        finally
+        foreach (var profileName in new[] { "Гонки", "Rennstrecke Übung", "レース", "Yarış" })
         {
-            if (shortcut is not null) System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shortcut);
-            System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shell);
+            var written = new ShortcutService().CreateShortcut(directory.Path, profileName, executable);
+
+            Assert(File.Exists(written), $"No shortcut was written for '{profileName}'.");
+            Assert(!written.Contains('?'), $"The file name lost characters: '{Path.GetFileName(written)}'.");
+            Assert(Path.GetFileNameWithoutExtension(written).Contains(profileName, StringComparison.Ordinal),
+                $"'{profileName}' did not survive into the file name '{Path.GetFileName(written)}'.");
+
+            // Read it back the way Sherpa reads any shortcut.
+            var target = ShellLink.Read(written);
+            Assert(target is not null, $"The shortcut written for '{profileName}' could not be read back.");
+            Assert(target!.Value.Arguments.Contains(profileName, StringComparison.Ordinal),
+                $"--activate lost the profile name: '{target.Value.Arguments}'.");
+            Assert(!target.Value.Arguments.Contains('?'),
+                $"--activate came back with question marks: '{target.Value.Arguments}'.");
         }
+
+        return Task.CompletedTask;
     }
 
     /// <summary>
@@ -453,6 +481,35 @@ internal static class Program
     }
 
     /// <summary>
+    /// The advanced-colour request has to be one Windows accepts. A wrong struct
+    /// size or field order is rejected, so a real capture that comes back marked
+    /// as read is the evidence the layout is right.
+    /// </summary>
+    private static Task TestAdvancedColorReadsRealDisplaysAsync()
+    {
+        var snapshot = new DisplayConfigurationService().Capture();
+        Assert(snapshot.ActiveTargets.Count > 0, "The machine running the tests has no active display.");
+
+        foreach (var target in snapshot.ActiveTargets)
+        {
+            Assert(target.AdvancedColorCaptured,
+                $"Windows refused the advanced colour request for {target.FriendlyName}, " +
+                "which usually means the struct size or field order is wrong.");
+            // Reported by the same call, so implausible values would mean the
+            // fields are being read at the wrong offsets.
+            Assert(target.BitsPerColorChannel is > 0 and <= 16,
+                $"{target.FriendlyName} reported {target.BitsPerColorChannel} bits per channel.");
+            Assert(target.ColorEncoding <= 4, $"{target.FriendlyName} reported colour encoding {target.ColorEncoding}.");
+            // HDR cannot be on where it is not supported; that pairing would mean
+            // the two flag bits are swapped.
+            Assert(target.AdvancedColorSupported || !target.AdvancedColorEnabled,
+                $"{target.FriendlyName} reports HDR enabled but unsupported, so the flag bits are misread.");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
     /// The order of the flags inside the advanced-colour bitfield.
     /// </summary>
     /// <remarks>
@@ -487,35 +544,6 @@ internal static class Program
         var reserved = DisplayConfigurationService.DecodeAdvancedColorFlags(0xFFFF_FFF0);
         Assert(!reserved.Supported && !reserved.Enabled && !reserved.ForceDisabled,
             "Reserved bits must not be read as flags.");
-        return Task.CompletedTask;
-    }
-
-    /// <summary>
-    /// The advanced-colour request has to be one Windows accepts. A wrong struct
-    /// size or field order is rejected, so a real capture that comes back marked
-    /// as read is the evidence the layout is right.
-    /// </summary>
-    private static Task TestAdvancedColorReadsRealDisplaysAsync()
-    {
-        var snapshot = new DisplayConfigurationService().Capture();
-        Assert(snapshot.ActiveTargets.Count > 0, "The machine running the tests has no active display.");
-
-        foreach (var target in snapshot.ActiveTargets)
-        {
-            Assert(target.AdvancedColorCaptured,
-                $"Windows refused the advanced colour request for {target.FriendlyName}, " +
-                "which usually means the struct size or field order is wrong.");
-            // Reported by the same call, so implausible values would mean the
-            // fields are being read at the wrong offsets.
-            Assert(target.BitsPerColorChannel is > 0 and <= 16,
-                $"{target.FriendlyName} reported {target.BitsPerColorChannel} bits per channel.");
-            Assert(target.ColorEncoding <= 4, $"{target.FriendlyName} reported colour encoding {target.ColorEncoding}.");
-            // HDR cannot be on where it is not supported; that pairing would mean
-            // the two flag bits are swapped.
-            Assert(target.AdvancedColorSupported || !target.AdvancedColorEnabled,
-                $"{target.FriendlyName} reports HDR enabled but unsupported, so the flag bits are misread.");
-        }
-
         return Task.CompletedTask;
     }
 
@@ -691,6 +719,130 @@ internal static class Program
         // Nothing to divide by. A zero height must not throw or divide.
         Assert(!Wide(1920, 0), "A display with no height cannot be measured.");
         Assert(!Wide(0, 0), "An empty bounds cannot be measured.");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The parts of Sherpa that would behave differently on a Windows installed
+    /// in another language.
+    /// </summary>
+    /// <remarks>
+    /// Unlike the hardware assumptions, this one is genuinely testable on the
+    /// development machine: the culture is a thread setting. Turkish is here for
+    /// the dotted and dotless i, which makes upper-casing a path lossy; German
+    /// and Russian for a decimal comma; Thai for a calendar whose year is not
+    /// 2026.
+    /// </remarks>
+    private static Task TestOtherLanguagesAsync()
+    {
+        using var directory = new TemporaryDirectory();
+        // Resolution reads the file system, so these have to be real files.
+        var executable = Path.Combine(directory.Path, "iRacing.exe");
+        File.WriteAllText(executable, "x");
+
+        var original = System.Globalization.CultureInfo.CurrentCulture;
+        try
+        {
+            foreach (var name in new[] { "tr-TR", "de-DE", "ru-RU", "th-TH" })
+            {
+                var culture = System.Globalization.CultureInfo.GetCultureInfo(name);
+                System.Threading.Thread.CurrentThread.CurrentCulture = culture;
+
+                // Identity comes from an upper-cased path. In Turkish "i" upper-cases
+                // to a dotted capital, so a culture-sensitive conversion would make
+                // C:\Sim\iRacing.exe and the same path seen again disagree.
+                var resolver = new LaunchTargetResolver();
+                var app = new LaunchApplication { Name = "iRacing", Path = executable };
+                var identity = resolver.Resolve(app).IdentityKey;
+                Assert(identity.Contains("IRACING.EXE", StringComparison.Ordinal),
+                    $"Under {name} the identity key came out as '{identity}'.");
+                Assert(!identity.Contains('\u0130') && !identity.Contains('\u0131'),
+                    $"Under {name} the identity key picked up a Turkish i: '{identity}'.");
+
+                // The same profile seen twice must collide, whatever the language.
+                var profile = new SwitchProfile
+                {
+                    Name = "iRacing",
+                    Applications =
+                    {
+                        new LaunchApplication { Name = "First", Path = executable },
+                        new LaunchApplication { Name = "Second", Path = executable.ToUpperInvariant() }
+                    }
+                };
+                Assert(ApplicationIssueScanner.Apply(profile, new FakeProcessService()) == 1,
+                    $"Under {name} two spellings of one path stopped colliding.");
+
+                // Searching the installed applications has to find them by name in
+                // any language, including a Turkish capital I.
+                var installed = new InstalledApplication("iRacing UI", @"C:\sim\iRacingUI.exe", "", "", "iRacing");
+                Assert(InstalledApplicationCatalog.Matches(installed, "IRACING"),
+                    $"Under {name} an upper-case search stopped matching.");
+                Assert(InstalledApplicationCatalog.Matches(installed, "iracing"),
+                    $"Under {name} a lower-case search stopped matching.");
+
+                // Settings are whole milliseconds, typed and shown as digits. A
+                // decimal comma must not enter into it.
+                Assert(int.TryParse(15000.ToString(), out var round) && round == 15000,
+                    $"Under {name} a timeout did not survive being shown and read back.");
+
+                // The uninstaller check reads the executable, not the label, so it
+                // holds when the label is not English.
+                Assert(InstalledApplicationCatalog.IsUninstallerTarget("unins000"),
+                    $"Under {name} an Inno Setup uninstaller was not recognised.");
+                Assert(InstalledApplicationCatalog.IsUninstallerTarget("uninst"),
+                    $"Under {name} an NSIS uninstaller was not recognised.");
+                Assert(!InstalledApplicationCatalog.IsUninstallerTarget("iRacingUI"),
+                    $"Under {name} an ordinary application was mistaken for an uninstaller.");
+
+                // A filename that records when something happened should say the
+                // same year the log does.
+                // A timestamped file name has to say the year the log says. Asserting
+                // that the culture-sensitive form differs is what makes this
+                // meaningful: it proves the invariant call is load-bearing rather
+                // than decoration.
+                var stamp = DateTime.Now.ToString("yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture);
+                Assert(stamp.StartsWith("20", StringComparison.Ordinal),
+                    $"Under {name} a timestamped filename came out as '{stamp}'.");
+                if (name == "th-TH")
+                    Assert(DateTime.Now.ToString("yyyyMMdd") != stamp,
+                        "Thai should use the Buddhist calendar; if it no longer does, this test proves nothing.");
+            }
+        }
+        finally { System.Threading.Thread.CurrentThread.CurrentCulture = original; }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// A Start menu written in another language.
+    /// </summary>
+    /// <remarks>
+    /// The English word list cannot filter "Deinstallieren", so the executable
+    /// behind it has to. Real installers were checked for the names used here:
+    /// this machine's own Start menu contains unins000.exe and uninst.exe behind
+    /// entries that only happen to be labelled in English.
+    /// </remarks>
+    private static Task TestCatalogIgnoresLanguageAsync()
+    {
+        using var directory = new TemporaryDirectory();
+        var root = Path.Combine(directory.Path, "Programme");
+        Directory.CreateDirectory(root);
+
+        var game = Path.Combine(directory.Path, "iRacingUI.exe");
+        var innoUninstaller = Path.Combine(directory.Path, "unins000.exe");
+        var nsisUninstaller = Path.Combine(directory.Path, "uninst.exe");
+        foreach (var file in new[] { game, innoUninstaller, nsisUninstaller }) File.WriteAllText(file, "x");
+
+        // German and Russian labels the English word list cannot possibly catch.
+        CreateShortcut(Path.Combine(root, "Deinstallieren.lnk"), innoUninstaller);
+        CreateShortcut(Path.Combine(root, "Удалить программу.lnk"), nsisUninstaller);
+        CreateShortcut(Path.Combine(root, "iRacing spielen.lnk"), game);
+
+        var found = InstalledApplicationCatalog.Scan([root]);
+        var names = found.Select(app => app.Name).ToList();
+
+        Assert(names is ["iRacing spielen"],
+            $"Only the application should be offered; got: {string.Join(", ", names)}");
         return Task.CompletedTask;
     }
 

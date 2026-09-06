@@ -26,26 +26,26 @@ public sealed class ShortcutService(IDiagnosticLog? diagnostics = null)
         if (string.IsNullOrWhiteSpace(desktop) || !Directory.Exists(desktop))
             throw new InvalidOperationException("The desktop folder could not be located.");
 
-        var path = Path.Combine(desktop, BuildFileName(profileName));
-        var shellType = Type.GetTypeFromProgID("WScript.Shell")
-            ?? throw new InvalidOperationException("The Windows shell scripting object is not available.");
+        return CreateShortcut(desktop, profileName, executable);
+    }
 
-        object? shell = null;
-        object? shortcut = null;
+    /// <summary>
+    /// Writes an activation shortcut into a folder. Separate from the desktop so
+    /// it can be written somewhere a test can read back.
+    /// </summary>
+    internal string CreateShortcut(string directory, string profileName, string executable)
+    {
+        var path = Path.Combine(directory, BuildFileName(profileName));
         try
         {
-            shell = Activator.CreateInstance(shellType)
-                ?? throw new InvalidOperationException("The Windows shell scripting object could not be created.");
-            shortcut = shellType.InvokeMember("CreateShortcut", BindingFlags.InvokeMethod, null, shell, [path])
-                ?? throw new InvalidOperationException("The shortcut could not be created.");
-
-            var type = shortcut.GetType();
-            Set(type, shortcut, "TargetPath", executable);
-            Set(type, shortcut, "Arguments", $"{CommandLineOptions.ActivateSwitch} \"{profileName}\"");
-            Set(type, shortcut, "WorkingDirectory", Path.GetDirectoryName(executable) ?? string.Empty);
-            Set(type, shortcut, "IconLocation", executable + ",0");
-            Set(type, shortcut, "Description", $"Switch Sherpa Manager to {profileName}");
-            type.InvokeMember("Save", BindingFlags.InvokeMethod, null, shortcut, null);
+            // The profile name is both the file name and part of the arguments,
+            // and --activate matches on it exactly, so it has to be written
+            // verbatim rather than through the system code page.
+            ShellLink.Write(path, executable,
+                arguments: $"{CommandLineOptions.ActivateSwitch} \"{profileName}\"",
+                workingDirectory: Path.GetDirectoryName(executable) ?? string.Empty,
+                iconLocation: executable + ",0",
+                description: $"Switch Sherpa Manager to {profileName}");
 
             _diagnostics.Write("info", "shortcut.created", data: new Dictionary<string, object?>
             {
@@ -53,26 +53,11 @@ public sealed class ShortcutService(IDiagnosticLog? diagnostics = null)
             });
             return path;
         }
-        catch (TargetInvocationException exception) when (exception.InnerException is not null)
+        catch (Exception exception)
         {
-            _diagnostics.Error("shortcut.create.failed", exception.InnerException);
-            throw exception.InnerException;
+            _diagnostics.Error("shortcut.create.failed", exception);
+            throw;
         }
-        finally
-        {
-            Release(shortcut);
-            Release(shell);
-        }
-    }
-
-    private static void Set(Type type, object instance, string property, string value) =>
-        type.InvokeMember(property, BindingFlags.SetProperty, null, instance, [value]);
-
-    private static void Release(object? comObject)
-    {
-        if (comObject is null || !Marshal.IsComObject(comObject)) return;
-        try { Marshal.FinalReleaseComObject(comObject); }
-        catch (ArgumentException) { }
     }
 
     public static string BuildFileName(string profileName)

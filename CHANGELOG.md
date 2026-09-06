@@ -34,6 +34,21 @@ Quality-of-life release.
   run of switches stays readable: purple when it succeeded, amber when it
   finished with warnings, red when it failed. The newest carries a badge, and
   each shows both the clock time and how long ago it was.
+- Desktop shortcuts keep a profile name written in any script. They were created
+  through the Windows scripting object, which converts text through the system's
+  code page, so a profile named in Cyrillic on a Western-code-page Windows became
+  question marks in both the file name and the `--activate` argument the shortcut
+  passes back, leaving a shortcut that matched no profile. Shortcuts are now
+  written through the shell's Unicode interface, which is also what Sherpa
+  already used to read them.
+- Uninstaller entries are recognised on a Windows installed in any language. They
+  were filtered by looking for English words in the Start menu label, which does
+  nothing against "Deinstallieren" or "Удалить программу"; the executable behind
+  the entry is checked as well, and installers do not translate that.
+- The Start menu folders are asked for directly instead of built by appending
+  "Programs" to the Start menu path, and a rejected profile's backup file is
+  timestamped with a fixed calendar, so it does not come out dated 2569 on a
+  Windows set to Thai.
 - An audio change that Windows accepts but does not make is now reported instead
   of passing as a success. Setting a default audio device has no documented API,
   so Sherpa calls one method at a fixed position in an interface Microsoft never

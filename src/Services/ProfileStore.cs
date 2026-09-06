@@ -55,7 +55,10 @@ public sealed class ProfileStore
     {
         try
         {
-            var backup = FilePath + $".invalid-{DateTime.Now:yyyyMMdd-HHmmssfff}-{Guid.NewGuid():N}";
+            // Invariant, because a Thai or Arabic calendar would otherwise put a
+            // different year in the filename than the one the log records.
+            var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmssfff", System.Globalization.CultureInfo.InvariantCulture);
+            var backup = FilePath + $".invalid-{stamp}-{Guid.NewGuid():N}";
             File.Copy(FilePath, backup, overwrite: false);
         }
         catch { /* Keeping a diagnostic copy must never prevent .bak recovery. */ }
