@@ -121,11 +121,14 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
                 var settleDelay = document.Settings.DisplaySettleDelayMs;
                 if (settleDelay > 0)
                 {
-                    report($"Waiting {settleDelay / 1000.0:0.#}s for the displays to settle…");
-                    await Task.Delay(settleDelay, cancellationToken);
+                    report("Waiting for the displays to settle…");
+                    var settled = await WaitForDesktopToSettleAsync(TimeSpan.FromMilliseconds(settleDelay),
+                        cancellationToken);
+                    report($"Displays settled after {settled.TotalSeconds:0.#}s.");
                     LogStage("display.settled", new Dictionary<string, object?>
                     {
-                        ["settleDelayMs"] = settleDelay
+                        ["settleDelayMs"] = settleDelay,
+                        ["actualMs"] = (int)settled.TotalMilliseconds
                     });
                 }
             }
@@ -407,6 +410,55 @@ public sealed class ProfileActivationService(IDisplayConfigurationService displa
             if (DateTime.UtcNow >= deadline) return false;
             await Task.Delay(100, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// How long the desktop has to hold still before it counts as settled.
+    /// </summary>
+    private static readonly TimeSpan DesktopStableFor = TimeSpan.FromMilliseconds(400);
+
+    /// <summary>How often the desktop is sampled while waiting.</summary>
+    private static readonly TimeSpan DesktopPollInterval = TimeSpan.FromMilliseconds(100);
+
+    /// <summary>
+    /// Waits until Windows has finished moving the desktop about, or until the
+    /// configured time runs out.
+    /// </summary>
+    /// <remarks>
+    /// This used to be a flat delay, on the reasoning that Windows returns from
+    /// the topology call before the monitors have finished re-syncing and an
+    /// application started too early lands on the wrong monitor. That reasoning is
+    /// right, but a fixed wait is a guess: it costs the same three seconds whether
+    /// the desktop took two hundred milliseconds or is still moving at the end.
+    /// The arrangement itself is observable, so it is watched instead, and the
+    /// setting becomes the longest Sherpa is willing to wait rather than the time
+    /// it always waits. Never slower than the old behaviour.
+    /// </remarks>
+    /// <returns>How long the wait actually took.</returns>
+    private async Task<TimeSpan> WaitForDesktopToSettleAsync(TimeSpan maximum, CancellationToken cancellationToken)
+    {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var last = displays.DescribeDesktopGeometry();
+        var lastChanged = TimeSpan.Zero;
+
+        while (clock.Elapsed < maximum)
+        {
+            var remaining = maximum - clock.Elapsed;
+            await Task.Delay(remaining < DesktopPollInterval ? remaining : DesktopPollInterval, cancellationToken)
+                .ConfigureAwait(false);
+
+            var current = displays.DescribeDesktopGeometry();
+            if (current != last)
+            {
+                last = current;
+                lastChanged = clock.Elapsed;
+                continue;
+            }
+
+            if (clock.Elapsed - lastChanged >= DesktopStableFor) break;
+        }
+
+        return clock.Elapsed;
     }
 
     /// <summary>

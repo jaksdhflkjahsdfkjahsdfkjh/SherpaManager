@@ -176,6 +176,64 @@ public sealed class NvidiaSurroundService : INvidiaSurroundService, IDisposable
         }
     }
 
+    /// <summary>
+    /// Whether the driver is already displaying exactly the wanted grid.
+    /// </summary>
+    /// <remarks>
+    /// Every field is compared, and the panels are compared in order, because the
+    /// order is the arrangement: the same three monitors listed left-to-right and
+    /// right-to-left are different Surround setups. Anything this cannot prove
+    /// identical has to be rebuilt, so an empty or partial reading is a mismatch
+    /// rather than a match. The cost of being wrong in one direction is three and
+    /// a half seconds; in the other it is the wrong screen layout.
+    /// </remarks>
+    /// <summary>
+    /// Whether the driver is already showing what this profile asks for, so the
+    /// rebuild can be skipped.
+    /// </summary>
+    /// <remarks>
+    /// Being enabled is not enough on its own: Surround can be on with a different
+    /// arrangement entirely, and skipping then would leave the monitors wrong with
+    /// nothing said about it. The grid has to be read back and match in full.
+    /// </remarks>
+    internal static bool IsAlreadyDisplaying(NvidiaSurroundSnapshot current, NvidiaSurroundSnapshot wanted) =>
+        current.Enabled && current.FullGridCaptured &&
+        GridsMatch(current.DisplayGrids, wanted.DisplayGrids);
+
+    internal static bool GridsMatch(IReadOnlyList<NvidiaSurroundDisplayGridSnapshot>? live,
+        IReadOnlyList<NvidiaSurroundDisplayGridSnapshot>? wanted)
+    {
+        if (live is null || wanted is null) return false;
+        if (live.Count == 0 || wanted.Count == 0) return false;
+        if (live.Count != wanted.Count) return false;
+
+        for (var index = 0; index < live.Count; index++)
+        {
+            var a = live[index];
+            var b = wanted[index];
+            if (a.Rows != b.Rows || a.Columns != b.Columns) return false;
+            if (a.ApplyWithBezelCorrection != b.ApplyWithBezelCorrection) return false;
+            if (a.ImmersiveGaming != b.ImmersiveGaming || a.BaseMosaic != b.BaseMosaic) return false;
+            if (a.PixelShift != b.PixelShift) return false;
+            if (a.PerDisplayWidth != b.PerDisplayWidth || a.PerDisplayHeight != b.PerDisplayHeight) return false;
+            if (a.BitsPerPixel != b.BitsPerPixel || a.RefreshRate != b.RefreshRate) return false;
+            if (a.Displays.Count != b.Displays.Count || a.Displays.Count == 0) return false;
+
+            for (var cell = 0; cell < a.Displays.Count; cell++)
+            {
+                var x = a.Displays[cell];
+                var y = b.Displays[cell];
+                if (x.DisplayId != y.DisplayId) return false;
+                if (x.Row != y.Row || x.Column != y.Column) return false;
+                if (x.OverlapX != y.OverlapX || x.OverlapY != y.OverlapY) return false;
+                if (x.Rotation != y.Rotation) return false;
+                if (x.CloneGroup != y.CloneGroup || x.PixelShiftType != y.PixelShiftType) return false;
+            }
+        }
+
+        return true;
+    }
+
     public void ApplyConfiguration(NvidiaSurroundSnapshot snapshot, bool enabled)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
@@ -214,6 +272,18 @@ public sealed class NvidiaSurroundService : INvidiaSurroundService, IDisposable
             if (_validateDisplayGrids is null || _setDisplayGrids is null)
                 throw new InvalidOperationException(
                     "The installed NVIDIA driver does not expose the full grid API required to restore panel order, bezel correction, and resolution.");
+
+            // Rebuilding a grid the driver is already displaying costs about three
+            // and a half seconds and blacks the screens out to arrive where it
+            // already was. Disabling has always returned early when Surround is
+            // already off; this is the same courtesy for enabling.
+            if (IsAlreadyDisplaying(current, snapshot))
+            {
+                _diagnostics.Write("info", "nvidia.apply.unchanged",
+                    "Surround is already displaying this grid, so it was left alone.",
+                    new Dictionary<string, object?> { ["gridCount"] = snapshot.DisplayGrids.Count });
+                return;
+            }
 
             ValidateManagedGrids(snapshot.DisplayGrids);
             ApplyDisplayGrids(snapshot.DisplayGrids);

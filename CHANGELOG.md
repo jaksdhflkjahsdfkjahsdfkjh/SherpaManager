@@ -34,6 +34,24 @@ Quality-of-life release.
   run of switches stays readable: purple when it succeeded, amber when it
   finished with warnings, red when it failed. The newest carries a badge, and
   each shows both the clock time and how long ago it was.
+- A profile that manages NVIDIA Surround no longer rebuilds a grid the driver is
+  already displaying. Turning Surround off had always returned early when it was
+  already off; turning it on did not, so activating a Surround profile while
+  already in that exact arrangement spent about three and a half seconds
+  rebuilding the topology, with the screens going black, to arrive where it
+  already was. It now compares the live grid against the wanted one in full —
+  panel order, bezel correction, resolution, refresh, rotation and overlap — and
+  skips only when every part matches. Being enabled is not enough on its own,
+  because Surround can be on with an entirely different arrangement.
+- Waiting for the displays to settle now ends when they have settled. It was a
+  flat delay, three seconds by default, spent in full whether Windows had
+  finished rearranging in two hundred milliseconds or was still going at the end
+  — on a measured switch that was three of fifteen seconds, mostly for nothing.
+  Sherpa now watches the desktop arrangement and continues once it has held still
+  for a moment, and the setting becomes the longest it is willing to wait rather
+  than the time it always waits. It is never slower than before, and the switch
+  reports how long it actually took. **Settings -> Wait after display changes** is
+  now **Wait for displays to settle, at most**.
 - Desktop shortcuts keep a profile name written in any script. They were created
   through the Windows scripting object, which converts text through the system's
   code page, so a profile named in Cyrillic on a Western-code-page Windows became

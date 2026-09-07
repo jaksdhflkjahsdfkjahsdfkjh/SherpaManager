@@ -43,6 +43,7 @@ internal static class Program
             ("Interrupted display transactions persist until completed", TestDisplayTransactionStoreAsync),
             ("Profile duplication preserves display verification data", TestProfileCloneAsync),
             ("NVIDIA Surround fingerprint includes GPU and panel order", TestSurroundFingerprintAsync),
+            ("An identical Surround grid is not rebuilt", TestSurroundGridComparisonAsync),
             ("NVIDIA Surround interop layout matches the x64 API", TestNvidiaInteropLayoutAsync),
             ("Display rollback countdown is ten seconds", TestDisplayRollbackCountdownAsync),
             ("Visible fixture starts minimized and closes gracefully", TestVisibleFixtureAsync),
@@ -67,6 +68,8 @@ internal static class Program
             ("A duplicated profile does not inherit the shortcut", TestProfileCloneDropsHotkeyAsync),
             ("A restored window is not minimized again", TestRestoredWindowStaysRestoredAsync),
             ("Applications wait for the displays to settle", TestDisplaySettleDelayAsync),
+            ("A desktop that stops moving is not waited on", TestSettleEndsWhenDesktopStopsAsync),
+            ("A desktop that keeps moving is waited for", TestSettleWaitsWhileDesktopMovesAsync),
             ("The display settle delay is bounded", TestDisplaySettleDelayBoundsAsync),
             ("The NVIDIA app is found where it is actually installed", TestNvidiaAppLocatorAsync),
             ("Display layouts scale and place every monitor", TestDisplayLayoutGeometryAsync),
@@ -843,6 +846,125 @@ internal static class Program
 
         Assert(names is ["iRacing spielen"],
             $"Only the application should be offered; got: {string.Join(", ", names)}");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Deciding whether the driver is already displaying the grid a profile wants.
+    /// </summary>
+    /// <remarks>
+    /// This is the whole risk of skipping the rebuild. Saying "same" wrongly leaves
+    /// the monitors in the wrong arrangement with nothing reported; saying
+    /// "different" wrongly costs three and a half seconds and a black screen. The
+    /// NVAPI call either side of it cannot be exercised without the hardware, but
+    /// this decision can be, exhaustively.
+    /// </remarks>
+    private static Task TestSurroundGridComparisonAsync()
+    {
+        static NvidiaSurroundDisplayGridSnapshot Grid() => new()
+        {
+            Rows = 1,
+            Columns = 3,
+            ApplyWithBezelCorrection = true,
+            ImmersiveGaming = true,
+            BaseMosaic = false,
+            PixelShift = false,
+            PerDisplayWidth = 1920,
+            PerDisplayHeight = 1080,
+            BitsPerPixel = 32,
+            RefreshRate = 144,
+            Displays =
+            {
+                new NvidiaSurroundDisplayGridCellSnapshot { Row = 0, Column = 0, DisplayId = 0x80061086, OverlapX = -60 },
+                new NvidiaSurroundDisplayGridCellSnapshot { Row = 0, Column = 1, DisplayId = 0x80061087 },
+                new NvidiaSurroundDisplayGridCellSnapshot { Row = 0, Column = 2, DisplayId = 0x80061088, OverlapX = -60 }
+            }
+        };
+
+        static bool Match(NvidiaSurroundDisplayGridSnapshot live, NvidiaSurroundDisplayGridSnapshot wanted) =>
+            NvidiaSurroundService.GridsMatch([live], [wanted]);
+
+        Assert(Match(Grid(), Grid()), "Two readings of the same grid should match.");
+
+        // Anything that changes what the user sees has to force a rebuild.
+        var wider = Grid(); wider.Columns = 4;
+        Assert(!Match(wider, Grid()), "A different column count is a different grid.");
+
+        var taller = Grid(); taller.Rows = 3;
+        Assert(!Match(taller, Grid()), "A different row count is a different grid.");
+
+        var lowerRes = Grid(); lowerRes.PerDisplayWidth = 1280;
+        Assert(!Match(lowerRes, Grid()), "A different per-panel resolution is a different grid.");
+
+        var slower = Grid(); slower.RefreshRate = 60;
+        Assert(!Match(slower, Grid()), "A different refresh rate is a different grid.");
+
+        var noBezel = Grid(); noBezel.ApplyWithBezelCorrection = false;
+        Assert(!Match(noBezel, Grid()), "Bezel correction changes the arrangement.");
+
+        var depth = Grid(); depth.BitsPerPixel = 24;
+        Assert(!Match(depth, Grid()), "A different colour depth is a different grid.");
+
+        var casual = Grid(); casual.ImmersiveGaming = false;
+        Assert(!Match(casual, Grid()), "The immersive gaming flag is part of the grid.");
+
+        // The order of the panels is the arrangement. The same three monitors
+        // listed right-to-left is a different Surround setup, and comparing them
+        // as a set rather than a sequence would call it identical.
+        var reversed = Grid();
+        reversed.Displays.Reverse();
+        Assert(!Match(reversed, Grid()), "Reversing the panel order is a different arrangement.");
+
+        var swappedIds = Grid();
+        (swappedIds.Displays[0].DisplayId, swappedIds.Displays[2].DisplayId) =
+            (swappedIds.Displays[2].DisplayId, swappedIds.Displays[0].DisplayId);
+        Assert(!Match(swappedIds, Grid()), "Two monitors swapping places is a different arrangement.");
+
+        var movedCell = Grid(); movedCell.Displays[1].Column = 2;
+        Assert(!Match(movedCell, Grid()), "A panel in a different cell is a different arrangement.");
+
+        var overlap = Grid(); overlap.Displays[0].OverlapX = -20;
+        Assert(!Match(overlap, Grid()), "Different bezel overlap is a different arrangement.");
+
+        var rotated = Grid(); rotated.Displays[1].Rotation = 1;
+        Assert(!Match(rotated, Grid()), "A rotated panel is a different arrangement.");
+
+        var missingPanel = Grid(); missingPanel.Displays.RemoveAt(2);
+        Assert(!Match(missingPanel, Grid()), "A missing panel is a different grid.");
+
+        // Nothing to compare must never read as "already correct".
+        Assert(!NvidiaSurroundService.GridsMatch(null, [Grid()]), "An unread live grid is not a match.");
+        Assert(!NvidiaSurroundService.GridsMatch([Grid()], null), "An absent wanted grid is not a match.");
+        Assert(!NvidiaSurroundService.GridsMatch([], [Grid()]), "An empty live reading is not a match.");
+        Assert(!NvidiaSurroundService.GridsMatch([Grid()], []), "An empty wanted grid is not a match.");
+        Assert(!NvidiaSurroundService.GridsMatch([Grid()], [Grid(), Grid()]), "A different grid count is not a match.");
+
+        var noPanels = Grid(); noPanels.Displays.Clear();
+        Assert(!NvidiaSurroundService.GridsMatch([noPanels], [noPanels]),
+            "A grid with no panels proves nothing and must not be treated as a match.");
+        Assert(!NvidiaSurroundService.GridsMatch([], []),
+            "Two empty readings prove nothing and must not be treated as a match.");
+
+        // The decision that uses the comparison, which is where being merely
+        // enabled could be mistaken for being correct.
+        static NvidiaSurroundSnapshot State(bool enabled, bool captured,
+            NvidiaSurroundDisplayGridSnapshot grid) => new()
+        {
+            Enabled = enabled,
+            FullGridCaptured = captured,
+            DisplayGrids = [grid]
+        };
+
+        Assert(NvidiaSurroundService.IsAlreadyDisplaying(State(true, true, Grid()), State(true, true, Grid())),
+            "Surround already showing this exact grid needs no rebuild.");
+
+        var different = Grid(); different.Columns = 4;
+        Assert(!NvidiaSurroundService.IsAlreadyDisplaying(State(true, true, different), State(true, true, Grid())),
+            "Surround enabled with a different arrangement must still be rebuilt.");
+        Assert(!NvidiaSurroundService.IsAlreadyDisplaying(State(false, true, Grid()), State(true, true, Grid())),
+            "Surround that is off must be turned on, however well the grids match.");
+        Assert(!NvidiaSurroundService.IsAlreadyDisplaying(State(true, false, Grid()), State(true, true, Grid())),
+            "A grid that could not be read back proves nothing and must be rebuilt.");
         return Task.CompletedTask;
     }
 
@@ -2408,6 +2530,75 @@ internal static class Program
             await Task.Delay(100);
         }
         return condition();
+    }
+
+    /// <summary>
+    /// The settle wait ending as soon as the desktop stops moving.
+    /// </summary>
+    /// <remarks>
+    /// It used to be a flat delay: the same three seconds whether Windows had
+    /// finished in two hundred milliseconds or was still going. On a real switch
+    /// that was three of the fifteen seconds, spent for nothing most of the time.
+    /// </remarks>
+    private static async Task TestSettleEndsWhenDesktopStopsAsync()
+    {
+        var processes = new FakeProcessService();
+        var displays = new FakeDisplayConfigurationService(processes.Events);
+        // Moves once, then holds still.
+        displays.DesktopGeometry.Enqueue("moving");
+        displays.DesktopGeometry.Enqueue("final");
+
+        var target = new SwitchProfile { Name = "iRacing", Display = new DisplaySnapshot() };
+        var document = new ProfileDocument
+        {
+            Profiles = { target },
+            // The old behaviour would spend all ten seconds of this.
+            Settings = { DisplaySettleDelayMs = 10_000 }
+        };
+
+        var reports = new List<string>();
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        Assert(await new ProfileActivationService(displays, processes).ActivateAsync(document, target, reports.Add),
+            "The switch should succeed.");
+        clock.Stop();
+
+        Assert(clock.Elapsed < TimeSpan.FromSeconds(3),
+            $"A desktop that settled at once still took {clock.Elapsed.TotalSeconds:0.#}s of a 10s allowance.");
+        Assert(reports.Any(message => message.Contains("Displays settled after", StringComparison.Ordinal)),
+            $"The wait should say how long it took. Reports: {string.Join(" | ", reports)}");
+        Assert(displays.DesktopGeometryReads > 1,
+            "The desktop should have been watched rather than assumed.");
+    }
+
+    /// <summary>
+    /// The settle wait holding on while Windows is still rearranging, and giving
+    /// up at the configured limit rather than waiting forever.
+    /// </summary>
+    private static async Task TestSettleWaitsWhileDesktopMovesAsync()
+    {
+        var processes = new FakeProcessService();
+        var displays = new FakeDisplayConfigurationService(processes.Events);
+        // Never the same reading twice, so it never settles.
+        for (var i = 0; i < 200; i++) displays.DesktopGeometry.Enqueue($"moving-{i}");
+
+        var target = new SwitchProfile { Name = "iRacing", Display = new DisplaySnapshot() };
+        var document = new ProfileDocument
+        {
+            Profiles = { target },
+            Settings = { DisplaySettleDelayMs = 1_200 }
+        };
+
+        var reports = new List<string>();
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        Assert(await new ProfileActivationService(displays, processes).ActivateAsync(document, target, reports.Add),
+            "A desktop that never settles must not fail the switch.");
+        clock.Stop();
+
+        // It must actually have waited, and must not have run past its allowance.
+        Assert(clock.Elapsed >= TimeSpan.FromMilliseconds(1_100),
+            $"A moving desktop should have been waited for; the switch took {clock.ElapsedMilliseconds}ms.");
+        Assert(clock.Elapsed < TimeSpan.FromSeconds(4),
+            $"The wait should stop at its limit; the switch took {clock.Elapsed.TotalSeconds:0.#}s.");
     }
 
     private static async Task TestDisplaySettleDelayAsync()
@@ -4469,6 +4660,24 @@ internal static class Program
 
     private sealed class FakeDisplayConfigurationService(List<string> events) : IDisplayConfigurationService
     {
+        /// <summary>
+        /// What the desktop looks like on each reading. A test that wants a
+        /// desktop still moving about queues several different readings; the last
+        /// one is repeated once the queue runs out.
+        /// </summary>
+        public Queue<string> DesktopGeometry { get; } = new();
+
+        public int DesktopGeometryReads { get; private set; }
+
+        private string _lastGeometry = "settled";
+
+        public string DescribeDesktopGeometry()
+        {
+            DesktopGeometryReads++;
+            if (DesktopGeometry.Count > 0) _lastGeometry = DesktopGeometry.Dequeue();
+            return _lastGeometry;
+        }
+
         public DisplayRestoreResult TargetResult { get; set; } =
             new(false, "display applied");
         public DisplayRestoreResult RecoveryResult { get; set; } =

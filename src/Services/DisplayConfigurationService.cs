@@ -79,6 +79,24 @@ public sealed class DisplayConfigurationService : IDisplayConfigurationService, 
     internal static bool IsWiderThanAnyPanel(int width, int height) =>
         height > 0 && width / (double)height >= WidestSinglePanelRatio;
 
+    /// <summary>
+    /// Where the desktop is right now, as a string that changes whenever anything
+    /// about the arrangement does.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not a snapshot: this is polled while waiting for Windows to
+    /// finish rearranging, so it has to be cheap. Reading the screens costs
+    /// microseconds, where a full capture costs about sixteen milliseconds.
+    /// </remarks>
+    public string DescribeDesktopGeometry()
+    {
+        var screens = Forms.Screen.AllScreens;
+        var work = Forms.Screen.PrimaryScreen?.WorkingArea ?? default;
+        return string.Join("|", screens.Select(screen =>
+            $"{screen.DeviceName}:{screen.Bounds.X},{screen.Bounds.Y},{screen.Bounds.Width},{screen.Bounds.Height}" +
+            $":{(screen.Primary ? 1 : 0)}")) + $"|work:{work.X},{work.Y},{work.Width},{work.Height}";
+    }
+
     public DisplaySnapshot Capture()
     {
         var queryFlags = GetActiveQueryFlags();

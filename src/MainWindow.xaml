@@ -364,11 +364,11 @@
                                             <ColumnDefinition Width="90"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Text="Wait after display changes" VerticalAlignment="Center"
+                                        <TextBlock Text="Wait for displays to settle, at most" VerticalAlignment="Center"
                                                    Foreground="{StaticResource MutedTextBrush}" Margin="0,0,12,0"/>
                                         <TextBox x:Name="DisplaySettleDelayBox" Grid.Column="1" MaxLength="6"
                                                  LostFocus="DisplaySettleDelay_LostFocus"
-                                                 ToolTip="Milliseconds to wait after the monitors change before starting or closing applications."/>
+                                                 ToolTip="Sherpa watches the desktop after the monitors change and starts applications as soon as it stops moving. This is the longest it will wait, not the time it always waits."/>
                                         <TextBlock Grid.Column="2" Text="ms" VerticalAlignment="Center"
                                                    Foreground="{StaticResource MutedTextBrush}" Margin="8,0,0,0"/>
                                     </Grid>

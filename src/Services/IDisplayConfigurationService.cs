@@ -7,6 +7,13 @@ public interface IDisplayConfigurationService
     /// <summary>Reads the live topology. Never changes anything.</summary>
     DisplaySnapshot Capture();
 
+    /// <summary>
+    /// A cheap description of where the desktop currently is: the bounds of every
+    /// screen and the working area. Two identical readings mean nothing has moved
+    /// between them.
+    /// </summary>
+    string DescribeDesktopGeometry();
+
     Task<DisplayRestoreResult> RestoreAsync(DisplaySnapshot snapshot, NvidiaSurroundMode surroundMode,
         CancellationToken cancellationToken = default);
 
