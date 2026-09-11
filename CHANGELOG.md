@@ -9,12 +9,56 @@ Releases are published from tags of the form `v<version>`. The tag, the
 `<Version>` in [Directory.Build.props](Directory.Build.props), and the heading in
 this file must all agree; the release workflow fails the build when they do not.
 
-## 0.7.0
+## 0.7.2
 
-Unreleased UI update.
+Everything since v0.5.8: HDR and multi-GPU machines are understood, switches
+are faster and confirm what they change, Windows installed in any language is
+handled, and the interface is redesigned.
+
+### Added
+
+- HDR is captured with a profile and restored with it. Advanced colour is not
+  carried by the display layout itself, so applying a layout previously said
+  nothing about HDR and left it wherever Windows had put it. Each display's state
+  is now recorded at capture and put back once the layout has settled, matched by
+  monitor device path rather than by the adapter ids the profile was saved with.
+  A profile saved before this existed says nothing about HDR rather than saying
+  it was off, so it never switches HDR off for a display someone set up by hand.
+  A display that cannot do HDR, a driver that will not answer, and a Windows too
+  old to know the request are all reported as warnings at most, and never fail a
+  display change that otherwise worked.
+- Machines with more than one graphics adapter are understood. The adapters
+  actually driving the displays are recorded with each layout, identified by
+  their PCI vendor, and a profile that manages NVIDIA Surround now says so up
+  front when none of the displays is on the NVIDIA card. NVAPI answers for the
+  card whether or not it is driving anything, so on a laptop with switchable
+  graphics, or a desktop with a monitor plugged into the motherboard rather than
+  the card, the profile used to look fine and then fail at the display step with
+  a bare driver error. A second adapter that drives no displays is not a problem
+  and is not reported as one. A layout captured on a multi-adapter machine also
+  records what it found in the diagnostics log, so a report from another PC says
+  what graphics it has.
 
 ### Changed
 
+- A profile that manages NVIDIA Surround no longer rebuilds a grid the driver is
+  already displaying. Turning Surround off had always returned early when it was
+  already off; turning it on did not, so activating a Surround profile while
+  already in that exact arrangement spent about three and a half seconds
+  rebuilding the topology, with the screens going black, to arrive where it
+  already was. It now compares the live grid against the wanted one in full —
+  panel order, bezel correction, resolution, refresh, rotation and overlap — and
+  skips only when every part matches. Being enabled is not enough on its own,
+  because Surround can be on with an entirely different arrangement.
+- Waiting for the displays to settle now ends when they have settled. It was a
+  flat delay, three seconds by default, spent in full whether Windows had
+  finished rearranging in two hundred milliseconds or was still going at the end
+  — on a measured switch that was three of fifteen seconds, mostly for nothing.
+  Sherpa now watches the desktop arrangement and continues once it has held still
+  for a moment, and the setting becomes the longest it is willing to wait rather
+  than the time it always waits. It is never slower than before, and the switch
+  reports how long it actually took. **Settings -> Wait after display changes** is
+  now **Wait for displays to settle, at most**.
 - Refreshed the interface around GridSherpa's charcoal surfaces, violet accents,
   typography, and consistent card spacing. Added scalable line icons to navigation,
   section headings, and common actions.
@@ -45,6 +89,40 @@ Unreleased UI update.
 - Added off-screen layout regression checks and optional PNG previews for standard
   and compact windows. Display switching and profile data formats are unchanged.
 
+### Fixed
+
+- An audio change that Windows accepts but does not make is now reported instead
+  of passing as a success. Setting a default audio device has no documented API,
+  so Sherpa calls one method at a fixed position in an interface Microsoft never
+  documented; a Windows version that shifts that layout would land the call on a
+  different method, which can return success having changed nothing. The default
+  is now read back after the change, and a switch that did not take is reported
+  as a warning naming the device still in use. It never fails the profile switch.
+  The diagnostics record the Windows build alongside it, since that is the first
+  thing worth knowing in a report from a machine the developer does not have.
+- Desktop shortcuts keep a profile name written in any script. They were created
+  through the Windows scripting object, which converts text through the system's
+  code page, so a profile named in Cyrillic on a Western-code-page Windows became
+  question marks in both the file name and the `--activate` argument the shortcut
+  passes back, leaving a shortcut that matched no profile. Shortcuts are now
+  written through the shell's Unicode interface, which is also what Sherpa
+  already used to read them.
+- Uninstaller entries are recognised on a Windows installed in any language. They
+  were filtered by looking for English words in the Start menu label, which does
+  nothing against "Deinstallieren" or "Удалить программу"; the executable behind
+  the entry is checked as well, and installers do not translate that.
+- The Start menu folders are asked for directly instead of built by appending
+  "Programs" to the Start menu path, and a rejected profile's backup file is
+  timestamped with a fixed calendar, so it does not come out dated 2569 on a
+  Windows set to Thai.
+- A single very wide monitor is no longer described as possibly several monitors
+  combined by the driver. The test for "wider than any one panel" sat at 3:1,
+  which a 49-inch 32:9 monitor exceeds at 3.56, so its owner was told their one
+  monitor might be a combined layout. It now sits between the widest panel made
+  and three panels side by side, which are 5.33. Two panels combined are the same
+  shape as one 32:9 monitor and are still not detected; describing every 32:9
+  owner's monitor wrongly is the worse of the two mistakes.
+
 ## 0.5.8
 
 Quality-of-life release.
@@ -70,76 +148,6 @@ Quality-of-life release.
   run of switches stays readable: purple when it succeeded, amber when it
   finished with warnings, red when it failed. The newest carries a badge, and
   each shows both the clock time and how long ago it was.
-- A profile that manages NVIDIA Surround no longer rebuilds a grid the driver is
-  already displaying. Turning Surround off had always returned early when it was
-  already off; turning it on did not, so activating a Surround profile while
-  already in that exact arrangement spent about three and a half seconds
-  rebuilding the topology, with the screens going black, to arrive where it
-  already was. It now compares the live grid against the wanted one in full —
-  panel order, bezel correction, resolution, refresh, rotation and overlap — and
-  skips only when every part matches. Being enabled is not enough on its own,
-  because Surround can be on with an entirely different arrangement.
-- Waiting for the displays to settle now ends when they have settled. It was a
-  flat delay, three seconds by default, spent in full whether Windows had
-  finished rearranging in two hundred milliseconds or was still going at the end
-  — on a measured switch that was three of fifteen seconds, mostly for nothing.
-  Sherpa now watches the desktop arrangement and continues once it has held still
-  for a moment, and the setting becomes the longest it is willing to wait rather
-  than the time it always waits. It is never slower than before, and the switch
-  reports how long it actually took. **Settings -> Wait after display changes** is
-  now **Wait for displays to settle, at most**.
-- Desktop shortcuts keep a profile name written in any script. They were created
-  through the Windows scripting object, which converts text through the system's
-  code page, so a profile named in Cyrillic on a Western-code-page Windows became
-  question marks in both the file name and the `--activate` argument the shortcut
-  passes back, leaving a shortcut that matched no profile. Shortcuts are now
-  written through the shell's Unicode interface, which is also what Sherpa
-  already used to read them.
-- Uninstaller entries are recognised on a Windows installed in any language. They
-  were filtered by looking for English words in the Start menu label, which does
-  nothing against "Deinstallieren" or "Удалить программу"; the executable behind
-  the entry is checked as well, and installers do not translate that.
-- The Start menu folders are asked for directly instead of built by appending
-  "Programs" to the Start menu path, and a rejected profile's backup file is
-  timestamped with a fixed calendar, so it does not come out dated 2569 on a
-  Windows set to Thai.
-- An audio change that Windows accepts but does not make is now reported instead
-  of passing as a success. Setting a default audio device has no documented API,
-  so Sherpa calls one method at a fixed position in an interface Microsoft never
-  documented; a Windows version that shifts that layout would land the call on a
-  different method, which can return success having changed nothing. The default
-  is now read back after the change, and a switch that did not take is reported
-  as a warning naming the device still in use. It never fails the profile switch.
-  The diagnostics record the Windows build alongside it, since that is the first
-  thing worth knowing in a report from a machine the developer does not have.
-- A single very wide monitor is no longer described as possibly several monitors
-  combined by the driver. The test for "wider than any one panel" sat at 3:1,
-  which a 49-inch 32:9 monitor exceeds at 3.56, so its owner was told their one
-  monitor might be a combined layout. It now sits between the widest panel made
-  and three panels side by side, which are 5.33. Two panels combined are the same
-  shape as one 32:9 monitor and are still not detected; describing every 32:9
-  owner's monitor wrongly is the worse of the two mistakes.
-- Machines with more than one graphics adapter are understood. The adapters
-  actually driving the displays are recorded with each layout, identified by
-  their PCI vendor, and a profile that manages NVIDIA Surround now says so up
-  front when none of the displays is on the NVIDIA card. NVAPI answers for the
-  card whether or not it is driving anything, so on a laptop with switchable
-  graphics, or a desktop with a monitor plugged into the motherboard rather than
-  the card, the profile used to look fine and then fail at the display step with
-  a bare driver error. A second adapter that drives no displays is not a problem
-  and is not reported as one. A layout captured on a multi-adapter machine also
-  records what it found in the diagnostics log, so a report from another PC says
-  what graphics it has.
-- HDR is captured with a profile and restored with it. Advanced colour is not
-  carried by the display layout itself, so applying a layout previously said
-  nothing about HDR and left it wherever Windows had put it. Each display's state
-  is now recorded at capture and put back once the layout has settled, matched by
-  monitor device path rather than by the adapter ids the profile was saved with.
-  A profile saved before this existed says nothing about HDR rather than saying
-  it was off, so it never switches HDR off for a display someone set up by hand.
-  A display that cannot do HDR, a driver that will not answer, and a Windows too
-  old to know the request are all reported as warnings at most, and never fail a
-  display change that otherwise worked.
 - **+ Add app** now opens a searchable list of the applications installed on
   this PC, read from the Start menu the way Windows reads it, with icons and the
   publisher each one came from. Type to filter by name, publisher, or path;
