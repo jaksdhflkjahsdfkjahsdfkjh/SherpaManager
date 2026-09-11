@@ -58,7 +58,7 @@ Compare the printed hash with the matching line in `SHA256SUMS.txt`. Releases ar
 
 Changes for each version are listed in [CHANGELOG.md](CHANGELOG.md).
 
-The **v0.7.0 development series** refreshes the desktop interface using
+**v0.7.2** refreshes the desktop interface using
 [GridSherpa's](https://grid-sherpa.com/) dark charcoal and violet theme, with scalable
 icons, consistent controls, and layouts that adapt to narrower windows. The profile
 overview and settings use two columns and fit without page scrollbars at the
