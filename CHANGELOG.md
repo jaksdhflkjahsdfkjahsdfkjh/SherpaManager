@@ -9,6 +9,29 @@ Releases are published from tags of the form `v<version>`. The tag, the
 `<Version>` in [Directory.Build.props](Directory.Build.props), and the heading in
 this file must all agree; the release workflow fails the build when they do not.
 
+## 0.7.0
+
+Unreleased UI update.
+
+### Changed
+
+- Refreshed the interface around GridSherpa's charcoal surfaces, violet accents,
+  typography, and consistent card spacing. Added scalable line icons to navigation,
+  section headings, and common actions.
+- The profile overview uses two columns on wider windows and stacks on compact
+  windows. Audio fields resize with their cards, action toolbars wrap, and the
+  application list has an empty state and more readable rows.
+- Settings are grouped into window and startup, display safety, application launch,
+  and diagnostics. Both pages scroll, with status and recent switches always visible.
+- Unified text fields, dropdowns, scrollbars, button states, and keyboard focus.
+  Dropdowns now honor vertical spacing and clip long selected device names.
+- Dialogs share the same spacing and control styles. The application picker keeps
+  its actions separate at minimum width; display confirmation sizes to its content
+  so the rollback countdown and both actions remain visible. Display diagrams scale
+  down to fit narrower windows.
+- Added off-screen layout regression checks and optional PNG previews for standard
+  and compact windows. Display switching and profile data formats are unchanged.
+
 ## 0.5.8
 
 Quality-of-life release.

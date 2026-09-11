@@ -9,7 +9,7 @@ using SherpaManager.Services;
 
 namespace SherpaManager.Tests;
 
-internal static class Program
+internal static partial class Program
 {
     private static int _passed;
 
@@ -115,7 +115,9 @@ internal static class Program
             ("A shortcut keeps a profile name Windows cannot spell", TestShortcutKeepsNonAsciiNameAsync),
             ("Installed applications are read from the Start menu", TestInstalledCatalogAsync),
             ("Searching finds an app by name, publisher, or path", TestInstalledCatalogSearchAsync),
-            ("The application picker lists, filters, and chooses", TestApplicationPickerRendersAsync)
+            ("The application picker lists, filters, and chooses", TestApplicationPickerRendersAsync),
+            ("UI layout keeps editor and settings usable at compact sizes", TestMainLayoutAsync),
+            ("UI layout keeps dialog actions and countdown visible", TestDialogLayoutAsync)
         };
 
         // Some assertions read numbers out of rendered text. Pinning the culture
@@ -285,6 +287,7 @@ internal static class Program
                 window.Show();
                 window.UpdateLayout();
                 CollectText(window, rendered);
+                SavePreview(window, window.GetType().Name);
 
                 var list = (System.Windows.Controls.ListBox)window.FindName("ResultList");
                 var search = (System.Windows.Controls.TextBox)window.FindName("SearchBox");
@@ -4494,6 +4497,7 @@ internal static class Program
                 window.Show();
                 window.UpdateLayout();
                 CollectText(window, rendered);
+                SavePreview(window, window.GetType().Name);
             }
             finally
             {

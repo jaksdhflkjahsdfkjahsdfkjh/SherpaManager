@@ -1,62 +1,40 @@
-<Window x:Class="SherpaManager.MainWindow"
-        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Sherpa Manager" Width="1180" Height="860" MinWidth="1000" MinHeight="820"
-        Icon="Assets/SherpaManager.ico"
-        Background="{StaticResource WindowBrush}" WindowStartupLocation="CenterScreen"
-        Closing="Window_Closing" StateChanged="Window_StateChanged"
-        PreviewKeyDown="Window_PreviewKeyDown">
-    <Grid Background="{StaticResource WindowBrush}">
+        xmlns:ui="clr-namespace:SherpaManager.Controls"
+        x:Class="SherpaManager.MainWindow"
+        Style="{StaticResource {x:Type Window}}"
+        Title="Sherpa Manager" Width="1200" Height="880" MinWidth="960" MinHeight="640"
+        Icon="Assets/SherpaManager.ico" Background="{StaticResource WindowBrush}" WindowStartupLocation="CenterScreen"
+        Closing="Window_Closing" StateChanged="Window_StateChanged" PreviewKeyDown="Window_PreviewKeyDown">
+    <Grid>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="276"/>
+            <ColumnDefinition Width="248"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
-
-        <Border Grid.Column="0" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,1,0">
-            <Grid Margin="20">
+        <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,1,0">
+            <Grid Margin="16,24,16,16">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
-                <Grid Margin="2,4,0,22">
+                <Grid Margin="8,0,0,32">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="48"/>
+                        <ColumnDefinition Width="44"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
-                    <Viewbox Width="44" Height="44" Stretch="Uniform" SnapsToDevicePixels="True">
-                        <Grid Width="64" Height="64">
-                            <Grid.Clip>
-                                <RectangleGeometry Rect="0,0,64,64" RadiusX="14" RadiusY="14"/>
-                            </Grid.Clip>
-                            <Border CornerRadius="14">
-                                <Border.Background>
-                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                        <GradientStop Color="#693BFF" Offset="0"/>
-                                        <GradientStop Color="#3618D8" Offset="1"/>
-                                    </LinearGradientBrush>
-                                </Border.Background>
-                            </Border>
-                            <Path Data="M 0,64 L 20,64 L 35,47 L 27,47 Z" Fill="#FF9700"/>
-                            <Path Data="M 29,18 L 18,18 C 11,18 9,21 9,25 C 9,29 12,31 18,31 L 23,31 C 29,31 31,35 31,39 C 31,44 27,47 21,47 L 9,47"
-                                  Stroke="White" StrokeThickness="7" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
-                            <Path Data="M 35,46 L 35,19 L 45,31 L 55,19 L 55,46"
-                                  Stroke="White" StrokeThickness="7" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
-                        </Grid>
-                    </Viewbox>
-                    <StackPanel Grid.Column="1" Margin="10,2,0,0" VerticalAlignment="Center">
-                        <TextBlock Text="S H E R P A" FontSize="21" FontWeight="Bold"/>
-                        <TextBlock Text="SIM RIG MANAGER" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="1,2,0,0"/>
+                    <Image Source="Assets/SherpaManager.png" Width="40" Height="40" RenderOptions.BitmapScalingMode="HighQuality"/>
+                    <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="Sherpa Manager" FontSize="17" FontWeight="SemiBold"/>
+                        <TextBlock Text="BY GRIDSHERPA" Foreground="{StaticResource MutedTextBrush}" FontSize="10" Margin="0,4,0,0"/>
                     </StackPanel>
                 </Grid>
-                <Grid Grid.Row="1" Margin="0,0,0,10">
-                    <TextBlock Text="PROFILES" Foreground="{StaticResource MutedTextBrush}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                    <Button Content="＋" Width="34" Height="30" Padding="0" HorizontalAlignment="Right" ToolTip="New profile" Click="NewProfile_Click"/>
+                <Grid Grid.Row="1" Margin="8,0,0,12">
+                    <TextBlock Text="YOUR PROFILES" Foreground="{StaticResource MutedTextBrush}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    <Button Content="+" FontSize="20" Width="32" MinHeight="32" Padding="0" HorizontalAlignment="Right" ToolTip="New profile" AutomationProperties.Name="New profile" Click="NewProfile_Click"/>
                 </Grid>
-                <ListBox x:Name="ProfilesList" Grid.Row="2" Background="Transparent" BorderThickness="0"
-                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                         SelectionChanged="ProfilesList_SelectionChanged">
+                <ListBox x:Name="ProfilesList" Grid.Row="2" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled" SelectionChanged="ProfilesList_SelectionChanged">
                     <ListBox.ContextMenu>
                         <ContextMenu>
                             <MenuItem Header="Rename" Click="RenameProfile_Click"/>
@@ -74,15 +52,21 @@
                             <Setter Property="Margin" Value="0,0,0,7"/>
                             <Setter Property="Background" Value="Transparent"/>
                             <Setter Property="BorderThickness" Value="0"/>
+                            <Setter Property="FocusVisualStyle" Value="{StaticResource FocusRing}"/>
                             <Setter Property="Template">
                                 <Setter.Value>
                                     <ControlTemplate TargetType="ListBoxItem">
-                                        <Border x:Name="ItemBorder" Background="{TemplateBinding Background}" CornerRadius="8" Padding="12,11">
+                                        <Border x:Name="ItemBorder" Background="{TemplateBinding Background}" CornerRadius="8" Padding="12,14" BorderThickness="1" BorderBrush="Transparent">
                                             <ContentPresenter/>
                                         </Border>
                                         <ControlTemplate.Triggers>
-                                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ItemBorder" Property="Background" Value="#201F28"/></Trigger>
-                                            <Trigger Property="IsSelected" Value="True"><Setter TargetName="ItemBorder" Property="Background" Value="#299B8DFF"/></Trigger>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="ItemBorder" Property="Background" Value="{StaticResource Surface2Brush}"/>
+                                            </Trigger>
+                                            <Trigger Property="IsSelected" Value="True">
+                                                <Setter TargetName="ItemBorder" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                                                <Setter TargetName="ItemBorder" Property="Background" Value="{StaticResource AccentSoftBrush}"/>
+                                            </Trigger>
                                         </ControlTemplate.Triggers>
                                     </ControlTemplate>
                                 </Setter.Value>
@@ -92,8 +76,11 @@
                     <ListBox.ItemTemplate>
                         <DataTemplate>
                             <Grid>
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="8"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                                <Border Width="4" Height="30" CornerRadius="2" Background="{StaticResource AccentBrush}" HorizontalAlignment="Left"/>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="28"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Path Style="{StaticResource SectionIcon}" Data="{StaticResource IconLayout}"/>
                                 <StackPanel Grid.Column="1" Margin="5,0,0,0">
                                     <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
                                     <TextBlock Text="{Binding Applications.Count, StringFormat={}{0} apps}" Foreground="{StaticResource MutedTextBrush}" FontSize="11"/>
@@ -102,373 +89,329 @@
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
-                <StackPanel Grid.Row="3" Margin="0,14,0,0">
-                    <Border Background="{StaticResource Surface2Brush}" CornerRadius="7" Padding="10" Margin="0,0,0,9">
+                <StackPanel Grid.Row="3" Margin="0,20,0,0">
+                    <Border Background="{StaticResource WindowBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,16">
                         <StackPanel>
                             <TextBlock Text="CURRENT MODE" Foreground="{StaticResource MutedTextBrush}" FontSize="10"/>
-                            <TextBlock x:Name="ActiveProfileText" Text="None active" FontWeight="SemiBold" Margin="0,3,0,0"/>
+                            <TextBlock x:Name="ActiveProfileText" Text="None active" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,6,0,0"/>
                         </StackPanel>
                     </Border>
-                    <Button Content="Profile editor" Click="ShowProfilePage_Click" HorizontalAlignment="Stretch" Margin="0,0,0,8"/>
-                    <Button Content="Settings" Click="ShowSettingsPage_Click" HorizontalAlignment="Stretch"/>
+                    <Button Content="Profile editor" ui:Icon.Data="{StaticResource IconLayout}" Click="ShowProfilePage_Click" Margin="0,0,0,4">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource NavigationButton}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SelectedIndex, ElementName=MainTabs}" Value="0">
+                                        <Setter Property="Background" Value="{StaticResource AccentSoftBrush}"/>
+                                        <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+                    <Button Content="Settings" ui:Icon.Data="{StaticResource IconSettings}" Click="ShowSettingsPage_Click">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource NavigationButton}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SelectedIndex, ElementName=MainTabs}" Value="1">
+                                        <Setter Property="Background" Value="{StaticResource AccentSoftBrush}"/>
+                                        <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+                    <TextBlock x:Name="VersionText" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="12,20,0,0"/>
                 </StackPanel>
             </Grid>
         </Border>
-
-        <Grid Grid.Column="1" Background="{StaticResource WindowBrush}" DataContext="{Binding ElementName=ProfilesList, Path=SelectedItem}">
+        <Grid Grid.Column="1" DataContext="{Binding ElementName=ProfilesList, Path=SelectedItem}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
             <TabControl x:Name="MainTabs" SelectedIndex="0" Background="{StaticResource WindowBrush}" BorderThickness="0">
                 <TabControl.Template>
                     <ControlTemplate TargetType="TabControl">
-                        <ContentPresenter Content="{TemplateBinding SelectedContent}"
-                                          ContentTemplate="{TemplateBinding SelectedContentTemplate}"
-                                          ContentTemplateSelector="{TemplateBinding SelectedContentTemplateSelector}"/>
+                        <ContentPresenter Content="{TemplateBinding SelectedContent}" ContentTemplate="{TemplateBinding SelectedContentTemplate}" ContentTemplateSelector="{TemplateBinding SelectedContentTemplateSelector}"/>
                     </ControlTemplate>
                 </TabControl.Template>
                 <TabItem>
-            <!-- The page has grown past the window height, so it must scroll or
-                 the status bar and its Recent switches button are unreachable. -->
-            <ScrollViewer Background="{StaticResource WindowBrush}" VerticalScrollBarVisibility="Auto">
-                <StackPanel Margin="34,28,34,42">
-                    <Grid Margin="0,0,0,25">
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                        <StackPanel>
-                            <TextBox x:Name="ProfileNameBox" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
-                                     FontSize="28" FontWeight="Bold" MaxLength="40"
-                                     Background="Transparent" BorderThickness="0,0,0,1" Padding="0,0,0,2"
-                                     BorderBrush="{StaticResource BorderBrush}"
-                                     ToolTip="Click to rename this profile."/>
-                            <TextBox Text="{Binding Description, UpdateSourceTrigger=PropertyChanged}" Foreground="{StaticResource MutedTextBrush}"
-                                     Background="Transparent" BorderThickness="0" Padding="0" Margin="2,7,0,0" MaxLength="120"
-                                     ToolTip="Click to describe when you use this setup."/>
-                        </StackPanel>
-                        <Button x:Name="ActivateButton" Grid.Column="1" Style="{StaticResource PrimaryButton}" Content="ACTIVATE PROFILE"
-                                Click="ActivateProfile_Click" VerticalAlignment="Center" Margin="18,0,0,0"/>
-                    </Grid>
-
-                    <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="10" Padding="20" Margin="0,0,0,22">
-                        <StackPanel>
-                            <TextBlock Text="DISPLAY LAYOUT" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource MutedTextBrush}"/>
-                            <TextBlock Text="Capture the monitor setup you want for this profile, then test it."
-                                       Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,6,0,0"/>
-                            <TextBlock Text="{Binding DisplaySummary}" TextWrapping="Wrap" Margin="0,10,0,0" FontSize="14"/>
-
-                            <Grid Margin="0,14,0,0">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="175"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Text="NVIDIA Surround" Foreground="{StaticResource MutedTextBrush}"
-                                           VerticalAlignment="Center" Margin="0,0,12,0"/>
-                                <ComboBox x:Name="SurroundModeCombo" Grid.Column="1"
-                                          SelectedValuePath="Value" DisplayMemberPath="Label"
-                                          SelectedValue="{Binding NvidiaSurroundMode, UpdateSourceTrigger=PropertyChanged}"/>
-                            </Grid>
-
-                            <UniformGrid Columns="3" Rows="3" Margin="-4,12,-4,-4">
-                                <Button Content="Capture current" Click="CaptureDisplay_Click" Margin="4"/>
-                                <Button Content="View layout" Click="ViewDisplayLayout_Click" Margin="4"
-                                        ToolTip="See the monitors this profile will arrange, drawn to scale."/>
-                                <Button Content="Test layout" Click="TestDisplay_Click" Margin="4"/>
-                                <Button Content="Clear saved" Click="ClearDisplay_Click" Margin="4"/>
-                                <Button Content="Restore previous" Click="RestoreLastDisplay_Click" Margin="4"/>
-                                <Button Content="Windows settings" Click="OpenDisplaySettings_Click" Margin="4"/>
-                                <Button Content="NVIDIA settings" Click="OpenNvidiaControlPanel_Click" Margin="4"/>
-                            </UniformGrid>
-                        </StackPanel>
-                    </Border>
-
-                    <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="10" Padding="14,10" Margin="0,0,0,16">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <StackPanel>
-                                <TextBlock Text="AUDIO" FontSize="11" FontWeight="SemiBold"
-                                           Foreground="{StaticResource MutedTextBrush}"/>
-                                <TextBlock Text="Output" FontSize="11" Margin="0,12,0,0"
-                                           Foreground="{StaticResource MutedTextBrush}"/>
-                                <TextBlock Text="Input" FontSize="11" Margin="0,16,0,0"
-                                           Foreground="{StaticResource MutedTextBrush}"/>
-                            </StackPanel>
-                            <StackPanel Grid.Column="1">
-                                <Button Content="Refresh" Click="RefreshAudioDevices_Click"
-                                        HorizontalAlignment="Right"
-                                        ToolTip="Re-read the connected playback and recording devices."/>
-                                <ComboBox x:Name="AudioOutputCombo" Width="330" Margin="0,6,0,0"
-                                          DisplayMemberPath="Label" SelectedValuePath="Id"
-                                          SelectionChanged="AudioOutput_SelectionChanged"
-                                          ToolTip="The playback device to make default when this profile is activated."/>
-                                <ComboBox x:Name="AudioInputCombo" Width="330" Margin="0,8,0,0"
-                                          DisplayMemberPath="Label" SelectedValuePath="Id"
-                                          SelectionChanged="AudioInput_SelectionChanged"
-                                          ToolTip="The recording device to make default when this profile is activated."/>
-                            </StackPanel>
-                        </Grid>
-                    </Border>
-
-                    <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="10" Padding="14,10" Margin="0,0,0,16">
-                        <StackPanel>
-                            <Grid>
+                    <ScrollViewer x:Name="ProfileScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel Margin="24,28,24,12">
+                            <TextBlock Text="PROFILE EDITOR" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" Margin="0,0,0,12"/>
+                            <Grid Margin="0,0,0,24">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Text="QUICK SWITCHING" FontSize="11" FontWeight="SemiBold"
-                                           VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}"/>
-                                <StackPanel Grid.Column="1" Orientation="Horizontal">
-                                    <Button x:Name="HotkeyButton" MinWidth="150" Click="HotkeyButton_Click"
-                                            PreviewKeyDown="HotkeyButton_PreviewKeyDown"
-                                            LostFocus="HotkeyButton_LostFocus"
-                                            ToolTip="Click, then press the keys you want, such as Ctrl+Alt+W. Esc cancels, Backspace clears."/>
-                                    <Button Content="Clear" Click="ClearHotkey_Click" Margin="6,0,0,0"/>
-                                    <Button Content="Desktop shortcut" Click="CreateShortcut_Click" Margin="12,0,0,0"
-                                            ToolTip="Create a desktop shortcut that activates this profile."/>
+                                <StackPanel>
+                                    <TextBox x:Name="ProfileNameBox" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" FontSize="28" FontWeight="SemiBold" MaxLength="40" Background="Transparent" BorderThickness="0,0,0,1" BorderBrush="{StaticResource BorderBrush}" Padding="0,0,0,6" AutomationProperties.Name="Profile name" ToolTip="Click to rename this profile."/>
+                                    <TextBox Text="{Binding Description, UpdateSourceTrigger=PropertyChanged}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Background="Transparent" BorderThickness="0" Padding="0,4" Margin="0,4,0,0" MaxLength="120" AutomationProperties.Name="Profile description" ToolTip="Describe when you use this setup."/>
                                 </StackPanel>
+                                <Button x:Name="ActivateButton" Grid.Column="1" Style="{StaticResource PrimaryButton}" Content="Activate profile" ui:Icon.Data="{StaticResource IconPlay}" Click="ActivateProfile_Click" VerticalAlignment="Top" Margin="20,0,0,0"/>
                             </Grid>
-                            <TextBlock x:Name="HotkeyStatusText" Visibility="Collapsed" Margin="0,8,0,0"
-                                       TextWrapping="Wrap" FontSize="11" Foreground="{StaticResource MutedTextBrush}"/>
+                            <ui:AdaptiveColumns>
+                                <Border Style="{StaticResource Card}" VerticalAlignment="Top">
+                                    <StackPanel>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Path Style="{StaticResource SectionIcon}" Data="{StaticResource IconMonitor}"/>
+                                            <TextBlock Text="Display layout" Style="{StaticResource SectionTitle}"/>
+                                        </StackPanel>
+                                        <TextBlock Text="Save your monitor setup, then test it before switching." TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" FontSize="12" Margin="0,8,0,16"/>
+                                        <Border Background="{StaticResource WindowBrush}" CornerRadius="8" Padding="14" Margin="0,0,0,16">
+                                            <TextBlock Text="{Binding DisplaySummary}" TextWrapping="Wrap" FontSize="13"/>
+                                        </Border>
+                                        <Grid Margin="0,0,0,16">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="200"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="NVIDIA Surround" VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}"/>
+                                            <ComboBox x:Name="SurroundModeCombo" Grid.Column="1" SelectedValuePath="Value" DisplayMemberPath="Label" AutomationProperties.Name="NVIDIA Surround mode" SelectedValue="{Binding NvidiaSurroundMode, UpdateSourceTrigger=PropertyChanged}"/>
+                                        </Grid>
+                                        <WrapPanel Margin="0,0,-8,0">
+                                            <Button Content="Capture current" Click="CaptureDisplay_Click" ui:Icon.Data="{StaticResource IconCapture}" Margin="0,0,8,8"/>
+                                            <Button Content="View layout" Click="ViewDisplayLayout_Click" ui:Icon.Data="{StaticResource IconLayout}" Margin="0,0,8,8"/>
+                                            <Button Content="Test layout" Click="TestDisplay_Click" ui:Icon.Data="{StaticResource IconPlay}" Margin="0,0,8,8"/>
+                                        </WrapPanel>
+                                        <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Margin="0,4,0,0" Padding="0,12,0,0">
+                                            <WrapPanel Margin="0,0,-8,-8">
+                                                <Button Content="Restore previous" Click="RestoreLastDisplay_Click" ui:Icon.Data="{StaticResource IconRestore}" Margin="0,0,8,8" ToolTip="Restore the saved emergency display snapshot."/>
+                                                <Button Content="Clear saved" Click="ClearDisplay_Click" Margin="0,0,8,8" ToolTip="Remove the saved display layout from this profile."/>
+                                                <Button Content="Windows settings" Click="OpenDisplaySettings_Click" ui:Icon.Data="{StaticResource IconExternal}" Margin="0,0,8,8"/>
+                                                <Button Content="NVIDIA settings" Click="OpenNvidiaControlPanel_Click" ui:Icon.Data="{StaticResource IconExternal}" Margin="0,0,8,8"/>
+                                            </WrapPanel>
+                                        </Border>
+                                    </StackPanel>
+                                </Border>
+                                <StackPanel>
+                                    <Border Style="{StaticResource Card}">
+                                        <StackPanel>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <Path Style="{StaticResource SectionIcon}" Data="{StaticResource IconAudio}"/>
+                                                    <TextBlock Text="Audio devices" Style="{StaticResource SectionTitle}"/>
+                                                </StackPanel>
+                                                <Button Content="Refresh" Click="RefreshAudioDevices_Click" ui:Icon.Data="{StaticResource IconRefresh}" Grid.Column="1" ToolTip="Refresh connected playback and recording devices."/>
+                                            </Grid>
+                                            <TextBlock Text="Choose the devices to use when this profile activates." TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" FontSize="12" Margin="0,8,0,16"/>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="90"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                </Grid.RowDefinitions>
+                                                <TextBlock Text="Output" VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}"/>
+                                                <ComboBox x:Name="AudioOutputCombo" Grid.Column="1" DisplayMemberPath="Label" SelectedValuePath="Id" SelectionChanged="AudioOutput_SelectionChanged" AutomationProperties.Name="Audio output"/>
+                                                <TextBlock Grid.Row="1" Text="Input" VerticalAlignment="Center" Margin="0,12,0,0" Foreground="{StaticResource MutedTextBrush}"/>
+                                                <ComboBox x:Name="AudioInputCombo" Grid.Row="1" Grid.Column="1" Margin="0,12,0,0" DisplayMemberPath="Label" SelectedValuePath="Id" SelectionChanged="AudioInput_SelectionChanged" AutomationProperties.Name="Audio input"/>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Style="{StaticResource Card}">
+                                        <StackPanel>
+                                            <StackPanel Orientation="Horizontal">
+                                                <Path Style="{StaticResource SectionIcon}" Data="{StaticResource IconKeyboard}"/>
+                                                <TextBlock Text="Quick switching" Style="{StaticResource SectionTitle}"/>
+                                            </StackPanel>
+                                            <TextBlock Text="Activate this setup from your keyboard or desktop." TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" FontSize="12" Margin="0,8,0,16"/>
+                                            <WrapPanel Margin="0,0,-8,-8">
+                                                <Button x:Name="HotkeyButton" MinWidth="160" Margin="0,0,8,8" Click="HotkeyButton_Click" ui:Icon.Data="{StaticResource IconKeyboard}" PreviewKeyDown="HotkeyButton_PreviewKeyDown" LostFocus="HotkeyButton_LostFocus" ToolTip="Click, then press a shortcut such as Ctrl+Alt+W. Esc cancels; Backspace clears."/>
+                                                <Button Content="Clear" Click="ClearHotkey_Click" Margin="0,0,8,8"/>
+                                                <Button Content="Desktop shortcut" Click="CreateShortcut_Click" ui:Icon.Data="{StaticResource IconExternal}" Margin="0,0,8,8"/>
+                                            </WrapPanel>
+                                            <TextBlock x:Name="HotkeyStatusText" Visibility="Collapsed" Margin="0,12,0,0" TextWrapping="Wrap" FontSize="12" Foreground="{StaticResource MutedTextBrush}"/>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </ui:AdaptiveColumns>
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Path Style="{StaticResource SectionIcon}" Data="{StaticResource IconLayout}"/>
+                                        <TextBlock Text="Applications" Style="{StaticResource SectionTitle}"/>
+                                    </StackPanel>
+                                    <TextBlock Text="Launch in the order below. Each app waits for the previous one to start." TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" FontSize="12" Margin="0,8,0,8"/>
+                                    <TextBlock x:Name="ApplicationIssuesText" FontSize="12" TextWrapping="Wrap" Foreground="{StaticResource CautionBrush}" Margin="0,0,0,8"/>
+                                    <WrapPanel Margin="0,0,-8,12">
+                                        <Button Content="Add app" Click="AddApplication_Click" ui:Icon.Data="{StaticResource IconPlus}" Style="{StaticResource PrimaryButton}" Margin="0,0,8,8" ToolTip="Search installed applications."/>
+                                        <Button Content="Browse…" Click="BrowseApplication_Click" ui:Icon.Data="{StaticResource IconFolder}" Margin="0,0,8,8"/>
+                                        <Button Content="Remove" Click="RemoveApplication_Click" ui:Icon.Data="{StaticResource IconTrash}" Margin="0,0,16,8"/>
+                                        <Button x:Name="DragLockButton" Width="36" Padding="0" Margin="0,0,8,8" Style="{StaticResource DragLockButtonStyle}" Click="ToggleDragReorder_Click" AutomationProperties.Name="Toggle application drag reordering"/>
+                                        <Button Content="↑" FontSize="18" Width="36" Padding="0" ToolTip="Move up" AutomationProperties.Name="Move application up" Click="MoveApplicationUp_Click" Margin="0,0,8,8"/>
+                                        <Button Content="↓" FontSize="18" Width="36" Padding="0" ToolTip="Move down" AutomationProperties.Name="Move application down" Click="MoveApplicationDown_Click" Margin="0,0,8,8"/>
+                                    </WrapPanel>
+                                    <Grid>
+                                        <DataGrid x:Name="ApplicationsGrid" ItemsSource="{Binding Applications}" AutoGenerateColumns="False" CanUserAddRows="False" AlternationCount="2" HeadersVisibility="All" RowHeaderWidth="30" CanUserSortColumns="False" AllowDrop="True" PreviewMouseLeftButtonDown="ApplicationsGrid_PreviewMouseLeftButtonDown" PreviewMouseMove="ApplicationsGrid_PreviewMouseMove" DragOver="ApplicationsGrid_DragOver" Drop="ApplicationsGrid_Drop" RowHeaderStyle="{StaticResource ApplicationRowHeaderStyle}" SelectionMode="Single" MinHeight="160" MaxHeight="360" RowEditEnding="ApplicationsGrid_RowEditEnding">
+                                            <DataGrid.Columns>
+                                                <DataGridCheckBoxColumn Header="Use" Binding="{Binding Enabled}" Width="48" ElementStyle="{StaticResource DataGridCheckBoxStyle}" EditingElementStyle="{StaticResource DataGridCheckBoxStyle}"/>
+                                                <DataGridTextColumn Header="Name" Binding="{Binding Name, UpdateSourceTrigger=PropertyChanged}" Width="130"/>
+                                                <DataGridCheckBoxColumn Header="Minimized" Binding="{Binding StartMinimized}" Width="92" ElementStyle="{StaticResource DataGridCheckBoxStyle}" EditingElementStyle="{StaticResource DataGridCheckBoxStyle}"/>
+                                                <DataGridCheckBoxColumn Binding="{Binding CloseOnDeactivate}" Width="130" ElementStyle="{StaticResource DataGridCheckBoxStyle}" EditingElementStyle="{StaticResource DataGridCheckBoxStyle}">
+                                                    <DataGridCheckBoxColumn.Header>
+                                                        <TextBlock Text="Close on switch" ToolTip="Ask the app to exit when leaving this profile, then force close it if it does not respond."/>
+                                                    </DataGridCheckBoxColumn.Header>
+                                                </DataGridCheckBoxColumn>
+                                                <DataGridTextColumn Header="Executable or URL" Binding="{Binding Path, UpdateSourceTrigger=PropertyChanged}" Width="*" MinWidth="210"/>
+                                                <DataGridTextColumn x:Name="DelayColumn" Header="Delay ms" Binding="{Binding LaunchDelayMs}" Width="92">
+                                                    <DataGridTextColumn.HeaderStyle>
+                                                        <Style TargetType="DataGridColumnHeader" BasedOn="{StaticResource {x:Type DataGridColumnHeader}}">
+                                                            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+                                                        </Style>
+                                                    </DataGridTextColumn.HeaderStyle>
+                                                    <DataGridTextColumn.ElementStyle>
+                                                        <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                                            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+                                                            <Setter Property="TextAlignment" Value="Center"/>
+                                                        </Style>
+                                                    </DataGridTextColumn.ElementStyle>
+                                                    <DataGridTextColumn.EditingElementStyle>
+                                                        <Style TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+                                                            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+                                                            <Setter Property="TextAlignment" Value="Center"/>
+                                                        </Style>
+                                                    </DataGridTextColumn.EditingElementStyle>
+                                                </DataGridTextColumn>
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="16,44,16,16" IsHitTestVisible="False">
+                                            <StackPanel.Style>
+                                                <Style TargetType="StackPanel">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Items.Count, ElementName=ApplicationsGrid}" Value="0">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </StackPanel.Style>
+                                            <TextBlock Text="Your companion apps, ready to go" FontWeight="SemiBold" TextAlignment="Center"/>
+                                            <TextBlock Text="Add apps to build this profile’s launch sequence." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" TextAlignment="Center" Margin="0,6,0,0"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
                         </StackPanel>
-                    </Border>
-
-                    <Grid Margin="0,0,0,10">
-                        <StackPanel>
-                            <TextBlock Text="APPLICATIONS" FontSize="17" FontWeight="SemiBold"/>
-                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                                <TextBlock Text="Applications start in the order listed. Each one waits for the previous to start."
-                                           Foreground="{StaticResource MutedTextBrush}" FontSize="11"/>
-                                <TextBlock x:Name="ApplicationIssuesText" FontSize="11" Margin="10,0,0,0"
-                                           Foreground="{StaticResource CautionBrush}"/>
-                            </StackPanel>
-                        </StackPanel>
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom">
-                            <Button x:Name="DragLockButton" Width="36" Padding="0,9" Margin="0,0,6,0"
-                                    Style="{StaticResource DragLockButtonStyle}" Click="ToggleDragReorder_Click"/>
-                            <Button Content="↑" Width="36" Padding="0,9" ToolTip="Move up" Click="MoveApplicationUp_Click" Margin="0,0,6,0"/>
-                            <Button Content="↓" Width="36" Padding="0,9" ToolTip="Move down" Click="MoveApplicationDown_Click" Margin="0,0,8,0"/>
-                            <Button Content="Browse…" Click="BrowseApplication_Click" Margin="0,0,8,0"/>
-                            <Button Content="Remove" Click="RemoveApplication_Click" Margin="0,0,8,0"/>
-                            <Button Content="＋ Add app" Click="AddApplication_Click" ToolTip="Search the applications installed on this PC."/>
-                        </StackPanel>
-                    </Grid>
-
-                    <DataGrid x:Name="ApplicationsGrid" ItemsSource="{Binding Applications}" AutoGenerateColumns="False" CanUserAddRows="False"
-                              AlternationCount="2" HeadersVisibility="All" RowHeaderWidth="30"
-                              CanUserSortColumns="False" AllowDrop="True"
-                              PreviewMouseLeftButtonDown="ApplicationsGrid_PreviewMouseLeftButtonDown"
-                              PreviewMouseMove="ApplicationsGrid_PreviewMouseMove"
-                              DragOver="ApplicationsGrid_DragOver" Drop="ApplicationsGrid_Drop"
-                              RowHeaderStyle="{StaticResource ApplicationRowHeaderStyle}"
-                              SelectionMode="Single" MinHeight="210" MaxHeight="350" RowEditEnding="ApplicationsGrid_RowEditEnding">
-                        <DataGrid.Columns>
-                            <DataGridCheckBoxColumn Header="Use" Binding="{Binding Enabled}" Width="48"
-                                                    ElementStyle="{StaticResource DataGridCheckBoxStyle}"
-                                                    EditingElementStyle="{StaticResource DataGridCheckBoxStyle}"/>
-                            <DataGridTextColumn Header="Name" Binding="{Binding Name, UpdateSourceTrigger=PropertyChanged}" Width="130"/>
-                            <DataGridCheckBoxColumn Header="Minimized" Binding="{Binding StartMinimized}" Width="76"
-                                                    ElementStyle="{StaticResource DataGridCheckBoxStyle}"
-                                                    EditingElementStyle="{StaticResource DataGridCheckBoxStyle}"/>
-                            <DataGridCheckBoxColumn Binding="{Binding CloseOnDeactivate}" Width="125"
-                                                    ElementStyle="{StaticResource DataGridCheckBoxStyle}"
-                                                    EditingElementStyle="{StaticResource DataGridCheckBoxStyle}">
-                                <DataGridCheckBoxColumn.Header>
-                                    <TextBlock Text="Close on switch"
-                                               ToolTip="Ask the app to exit when leaving this profile, then force close it if it does not respond."/>
-                                </DataGridCheckBoxColumn.Header>
-                            </DataGridCheckBoxColumn>
-                            <DataGridTextColumn Header="Executable or URL" Binding="{Binding Path, UpdateSourceTrigger=PropertyChanged}" Width="*" MinWidth="210"/>
-                            <DataGridTextColumn x:Name="DelayColumn" Header="Delay ms" Binding="{Binding LaunchDelayMs}" Width="76">
-                                <DataGridTextColumn.HeaderStyle>
-                                    <Style TargetType="DataGridColumnHeader" BasedOn="{StaticResource {x:Type DataGridColumnHeader}}">
-                                        <Setter Property="HorizontalContentAlignment" Value="Center"/>
-                                    </Style>
-                                </DataGridTextColumn.HeaderStyle>
-                                <DataGridTextColumn.ElementStyle>
-                                    <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
-                                        <Setter Property="HorizontalAlignment" Value="Stretch"/>
-                                        <Setter Property="TextAlignment" Value="Center"/>
-                                    </Style>
-                                </DataGridTextColumn.ElementStyle>
-                                <DataGridTextColumn.EditingElementStyle>
-                                    <Style TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
-                                        <Setter Property="HorizontalContentAlignment" Value="Center"/>
-                                        <Setter Property="TextAlignment" Value="Center"/>
-                                    </Style>
-                                </DataGridTextColumn.EditingElementStyle>
-                            </DataGridTextColumn>
-                        </DataGrid.Columns>
-                    </DataGrid>
-
-                    <Border Background="{StaticResource Surface2Brush}" CornerRadius="8" Padding="14" Margin="0,16,0,20">
-                        <Grid>
-                            <TextBlock x:Name="StatusText" Text="Ready" Foreground="{StaticResource MutedTextBrush}"
-                                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,150,0"/>
-                            <Button Content="Recent switches" Click="ShowActivationHistory_Click"
-                                    HorizontalAlignment="Right" VerticalAlignment="Center" Padding="10,5"
-                                    ToolTip="What recent profile switches actually did, step by step."/>
-                            <ProgressBar x:Name="BusyProgress" IsIndeterminate="True" Height="3" VerticalAlignment="Bottom" Visibility="Collapsed"
-                                         Foreground="{StaticResource AccentBrush}" Background="Transparent"/>
-                        </Grid>
-                    </Border>
-
-                </StackPanel>
-            </ScrollViewer>
+                    </ScrollViewer>
                 </TabItem>
-
                 <TabItem>
-                    <Grid Margin="34,28,34,42">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="*"/>
-                        </Grid.RowDefinitions>
-                        <StackPanel Margin="0,0,0,25">
-                            <TextBlock Text="Settings" FontSize="28" FontWeight="Bold"/>
-                            <TextBlock Text="Choose how Sherpa behaves."
-                                       Foreground="{StaticResource MutedTextBrush}" Margin="2,7,0,0"/>
-                        </StackPanel>
-
-                        <Border Grid.Row="1" Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}"
-                                BorderThickness="1" CornerRadius="10" Padding="20" Margin="0,0,0,18">
-                            <StackPanel>
-                                <TextBlock Text="WINDOW" FontSize="11" FontWeight="SemiBold"
-                                           Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,14"/>
-                                <CheckBox x:Name="CloseToTrayCheckBox" Content="Keep Sherpa running in the tray when I close its window"
-                                          Checked="SettingsCheckBox_Changed" Unchecked="SettingsCheckBox_Changed" Margin="0,0,0,9"/>
-                                <TextBlock Text="On: hide to the notification area. Off: exit Sherpa completely."
-                                           Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="20,-4,0,0"/>
-                            </StackPanel>
-                        </Border>
-
-                        <Border Grid.Row="2" Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}"
-                                BorderThickness="1" CornerRadius="10" Padding="20" Margin="0,0,0,18">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel VerticalAlignment="Center">
-                                    <TextBlock Text="DISPLAY SAFETY" FontSize="11" FontWeight="SemiBold"
-                                               Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,12"/>
-                                    <CheckBox x:Name="ConfirmDisplayChangesCheckBox"
-                                              Content="Show a 10-second rollback timer the first time a new layout is applied"
-                                              Checked="SettingsCheckBox_Changed" Unchecked="SettingsCheckBox_Changed"/>
-                                    <CheckBox x:Name="ShowActivationPreviewCheckBox" Margin="0,10,0,0"
-                                              Content="Show what a profile switch will change before it runs"
-                                              Checked="SettingsCheckBox_Changed" Unchecked="SettingsCheckBox_Changed"/>
-                                    <Grid Margin="0,14,0,0" HorizontalAlignment="Left">
+                    <ScrollViewer x:Name="SettingsScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel Margin="24,28,24,12">
+                            <TextBlock Text="PREFERENCES" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" Margin="0,0,0,12"/>
+                            <TextBlock Text="Settings" FontSize="28" FontWeight="SemiBold"/>
+                            <TextBlock Text="Make Sherpa work the way you do." TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" FontSize="12" Margin="0,8,0,24"/>
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Path Style="{StaticResource SectionIcon}" Data="{StaticResource IconSettings}"/>
+                                        <TextBlock Text="Window &amp; startup" Style="{StaticResource SectionTitle}"/>
+                                    </StackPanel>
+                                    <TextBlock Text="Keep Sherpa close at hand and choose how it starts." TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" FontSize="12" Margin="0,8,0,16"/>
+                                    <CheckBox x:Name="CloseToTrayCheckBox" Content="Keep Sherpa running in the tray when I close its window" Checked="SettingsCheckBox_Changed" Unchecked="SettingsCheckBox_Changed"/>
+                                    <TextBlock Text="Closing can keep Sherpa in the notification area. The tray’s Exit command always closes it." TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" FontSize="12" Margin="26,6,0,16"/>
+                                    <CheckBox x:Name="StartWithWindowsCheckBox" Content="Start Sherpa Manager when Windows starts" Checked="SettingsCheckBox_Changed" Unchecked="SettingsCheckBox_Changed"/>
+                                    <Grid Margin="0,16,0,0">
                                         <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="240"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Activate at startup" VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}"/>
+                                        <ComboBox Grid.Column="1" x:Name="StartupProfileCombo" DisplayMemberPath="Label" SelectedValuePath="Value" SelectionChanged="StartupProfileCombo_SelectionChanged"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Path Style="{StaticResource SectionIcon}" Data="{StaticResource IconShield}"/>
+                                        <TextBlock Text="Display safety" Style="{StaticResource SectionTitle}"/>
+                                    </StackPanel>
+                                    <TextBlock Text="Review changes and keep a way back to your previous setup." TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" FontSize="12" Margin="0,8,0,16"/>
+                                    <CheckBox x:Name="ConfirmDisplayChangesCheckBox" Content="Show a 10-second rollback timer the first time a new layout is applied" Checked="SettingsCheckBox_Changed" Unchecked="SettingsCheckBox_Changed"/>
+                                    <Border Height="12"/>
+                                    <CheckBox x:Name="ShowActivationPreviewCheckBox" Content="Show what a profile switch will change before it runs" Checked="SettingsCheckBox_Changed" Unchecked="SettingsCheckBox_Changed"/>
+                                    <Grid Margin="0,16,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="90"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Wait for displays to settle, at most" TextWrapping="Wrap" VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,16,0"/>
+                                        <TextBox Grid.Column="1" x:Name="DisplaySettleDelayBox" MaxLength="6" LostFocus="DisplaySettleDelay_LostFocus" ToolTip="Sherpa watches the desktop after the monitors change and starts applications as soon as it stops moving. This is the longest it will wait, not the time it always waits."/>
+                                        <TextBlock Grid.Column="2" Text="ms" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Path Style="{StaticResource SectionIcon}" Data="{StaticResource IconLayout}"/>
+                                        <TextBlock Text="Application launch" Style="{StaticResource SectionTitle}"/>
+                                    </StackPanel>
+                                    <TextBlock Text="Wait for each app to be ready before starting the next." TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" FontSize="12" Margin="0,8,0,16"/>
+                                    <TextBlock Text="Before starting the next app, wait for" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,8"/>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="Auto"/>
                                             <ColumnDefinition Width="90"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Text="Wait for displays to settle, at most" VerticalAlignment="Center"
-                                                   Foreground="{StaticResource MutedTextBrush}" Margin="0,0,12,0"/>
-                                        <TextBox x:Name="DisplaySettleDelayBox" Grid.Column="1" MaxLength="6"
-                                                 LostFocus="DisplaySettleDelay_LostFocus"
-                                                 ToolTip="Sherpa watches the desktop after the monitors change and starts applications as soon as it stops moving. This is the longest it will wait, not the time it always waits."/>
-                                        <TextBlock Grid.Column="2" Text="ms" VerticalAlignment="Center"
-                                                   Foreground="{StaticResource MutedTextBrush}" Margin="8,0,0,0"/>
+                                        <ComboBox x:Name="LaunchReadinessCombo" DisplayMemberPath="Label" SelectedValuePath="Value" SelectionChanged="LaunchReadiness_SelectionChanged" ToolTip="Applications Sherpa cannot track, such as scripts and protocol URLs, are never waited for."/>
+                                        <TextBlock Grid.Column="1" Text="up to" Margin="16,0,8,0" VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}"/>
+                                        <TextBox Grid.Column="2" x:Name="LaunchReadinessTimeoutBox" MaxLength="6" LostFocus="LaunchReadinessTimeout_LostFocus"/>
+                                        <TextBlock Grid.Column="3" Text="ms" Margin="8,0,0,0" VerticalAlignment="Center"/>
                                     </Grid>
-                                    <Grid Margin="0,14,0,0" HorizontalAlignment="Left">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto"/>
-                                            <ColumnDefinition Width="150"/>
-                                            <ColumnDefinition Width="Auto"/>
-                                            <ColumnDefinition Width="80"/>
-                                            <ColumnDefinition Width="Auto"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Text="Before starting the next app, wait for" VerticalAlignment="Center"
-                                                   Foreground="{StaticResource MutedTextBrush}" Margin="0,0,12,0"/>
-                                        <ComboBox x:Name="LaunchReadinessCombo" Grid.Column="1"
-                                                  DisplayMemberPath="Label" SelectedValuePath="Value"
-                                                  SelectionChanged="LaunchReadiness_SelectionChanged"
-                                                  ToolTip="Applications Sherpa cannot track, such as scripts and protocol URLs, are never waited for."/>
-                                        <TextBlock Grid.Column="2" Text="up to" VerticalAlignment="Center"
-                                                   Foreground="{StaticResource MutedTextBrush}" Margin="12,0,8,0"/>
-                                        <TextBox x:Name="LaunchReadinessTimeoutBox" Grid.Column="3" MaxLength="6"
-                                                 LostFocus="LaunchReadinessTimeout_LostFocus"/>
-                                        <TextBlock Grid.Column="4" Text="ms" VerticalAlignment="Center"
-                                                   Foreground="{StaticResource MutedTextBrush}" Margin="8,0,0,0"/>
-                                    </Grid>
-                                    <CheckBox x:Name="ShowLaunchDelaysCheckBox" Margin="0,10,0,0"
-                                              Content="Show the per-application launch delay column"
-                                              ToolTip="A fixed delay is only needed for scripts, protocol URLs, and other targets Sherpa cannot detect."
-                                              Checked="SettingsCheckBox_Changed" Unchecked="SettingsCheckBox_Changed"/>
-                                    <CheckBox x:Name="StartWithWindowsCheckBox" Margin="0,10,0,0"
-                                              Content="Start Sherpa Manager when Windows starts"
-                                              Checked="SettingsCheckBox_Changed" Unchecked="SettingsCheckBox_Changed"/>
-                                    <Grid Margin="0,14,0,0" HorizontalAlignment="Left">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto"/>
-                                            <ColumnDefinition Width="200"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Text="Activate at startup" VerticalAlignment="Center"
-                                                   Foreground="{StaticResource MutedTextBrush}" Margin="0,0,12,0"/>
-                                        <ComboBox x:Name="StartupProfileCombo" Grid.Column="1"
-                                                  DisplayMemberPath="Label" SelectedValuePath="Value"
-                                                  SelectionChanged="StartupProfileCombo_SelectionChanged"/>
-                                    </Grid>
+                                    <Border Height="16"/>
+                                    <CheckBox x:Name="ShowLaunchDelaysCheckBox" Content="Show the per-application launch delay column" ToolTip="A fixed delay is only needed for scripts, protocol URLs, and other targets Sherpa cannot detect." Checked="SettingsCheckBox_Changed" Unchecked="SettingsCheckBox_Changed"/>
                                 </StackPanel>
-                                <Button Grid.Column="1" Content="Open profile file" Click="OpenProfileFile_Click"
-                                        VerticalAlignment="Center" Margin="24,0,0,0"/>
-                            </Grid>
-                        </Border>
-
-                        <Border Grid.Row="3" Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}"
-                                BorderThickness="1" CornerRadius="10" Padding="20">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel VerticalAlignment="Center">
-                                    <TextBlock Text="DIAGNOSTICS" FontSize="11" FontWeight="SemiBold"
-                                               Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,8"/>
-                                    <TextBlock Text="Copy a redacted system, display, and recent activity report."
-                                               Foreground="{StaticResource MutedTextBrush}" FontSize="11"/>
+                            </Border>
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Path Style="{StaticResource SectionIcon}" Data="{StaticResource IconCopy}"/>
+                                        <TextBlock Text="Diagnostics &amp; profile data" Style="{StaticResource SectionTitle}"/>
+                                    </StackPanel>
+                                    <TextBlock Text="Copy a redacted system report or open your saved profiles." TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" FontSize="12" Margin="0,8,0,16"/>
+                                    <WrapPanel Margin="0,0,-8,-8">
+                                        <Button Content="Copy diagnostics" Click="CopyDiagnostics_Click" ui:Icon.Data="{StaticResource IconCopy}" Margin="0,0,8,8" ToolTip="Paths and command-line arguments are redacted."/>
+                                        <Button Content="Open profile file" Click="OpenProfileFile_Click" ui:Icon.Data="{StaticResource IconFolder}" Margin="0,0,8,8"/>
+                                    </WrapPanel>
                                 </StackPanel>
-                                <Button Grid.Column="1" Content="Copy diagnostics" Click="CopyDiagnostics_Click"
-                                        VerticalAlignment="Center" Margin="24,0,0,0"
-                                        ToolTip="Paths and command-line arguments are redacted"/>
-                            </Grid>
-                        </Border>
-                    </Grid>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
                 </TabItem>
             </TabControl>
-
-            <Border x:Name="BusyOverlay" Background="#B0131218" Visibility="Collapsed" Panel.ZIndex="5">
-                <Border Width="390" Padding="26" HorizontalAlignment="Center" VerticalAlignment="Center"
-                        Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}"
-                        BorderThickness="1" CornerRadius="12">
+            <Border Grid.Row="1" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="24,12">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="StatusText" Text="Ready" FontSize="12" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,16,0" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
+                    <Button Content="Recent switches" Click="ShowActivationHistory_Click" ui:Icon.Data="{StaticResource IconHistory}" Grid.Column="1" Padding="10,6" ToolTip="Review recent profile switches, step by step."/>
+                    <ProgressBar x:Name="BusyProgress" Grid.ColumnSpan="2" IsIndeterminate="True" Height="3" VerticalAlignment="Bottom" Margin="0,0,0,-12" Visibility="Collapsed" Foreground="{StaticResource AccentBrush}" Background="Transparent"/>
+                </Grid>
+            </Border>
+            <Border x:Name="BusyOverlay" Grid.RowSpan="2" Background="#B0131218" Visibility="Collapsed" Panel.ZIndex="5">
+                <Border Width="390" Padding="26" HorizontalAlignment="Center" VerticalAlignment="Center" Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="12">
                     <StackPanel>
-                        <ProgressBar IsIndeterminate="True" Height="4" Margin="0,0,0,18"
-                                     Foreground="{StaticResource AccentBrush}" Background="{StaticResource Surface2Brush}"/>
-                        <TextBlock Text="Working on your profile" FontSize="18" FontWeight="SemiBold"
-                                   HorizontalAlignment="Center"/>
-                        <TextBlock x:Name="BusyOperationText" Text="Please wait…" Margin="0,9,0,20"
-                                   Foreground="{StaticResource MutedTextBrush}" TextAlignment="Center"
-                                   TextWrapping="Wrap"/>
-                        <Button x:Name="BusyCancelButton" Content="Cancel" Click="CancelBusyOperation_Click"
-                                HorizontalAlignment="Center" MinWidth="120"
-                                ToolTip="Cancel this operation and restore the previous state"
-                                AutomationProperties.Name="Cancel current operation"/>
-                        <TextBlock Text="You can also press Esc" Margin="0,10,0,0" FontSize="11"
-                                   Foreground="{StaticResource MutedTextBrush}" HorizontalAlignment="Center"/>
+                        <ProgressBar IsIndeterminate="True" Height="4" Margin="0,0,0,18" Foreground="{StaticResource AccentBrush}" Background="{StaticResource Surface2Brush}"/>
+                        <TextBlock Text="Working on your profile" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                        <TextBlock x:Name="BusyOperationText" Text="Please wait…" Margin="0,9,0,20" Foreground="{StaticResource MutedTextBrush}" TextAlignment="Center" TextWrapping="Wrap"/>
+                        <Button x:Name="BusyCancelButton" Content="Cancel" Click="CancelBusyOperation_Click" HorizontalAlignment="Center" MinWidth="120" ToolTip="Cancel this operation and restore the previous state" AutomationProperties.Name="Cancel current operation"/>
+                        <TextBlock Text="You can also press Esc" Margin="0,10,0,0" FontSize="11" Foreground="{StaticResource MutedTextBrush}" HorizontalAlignment="Center"/>
                     </StackPanel>
                 </Border>
             </Border>
         </Grid>
-
-        <!-- Spans both columns and sits above them, so the version stays in the
-             window corner on every page. Not hit-testable: it must never take a
-             click meant for what is underneath. -->
-        <TextBlock x:Name="VersionText" Grid.ColumnSpan="2"
-                   HorizontalAlignment="Right" VerticalAlignment="Bottom"
-                   Margin="0,0,12,8" FontSize="11" Opacity="0.55"
-                   IsHitTestVisible="False" Panel.ZIndex="10"
-                   Foreground="{StaticResource MutedTextBrush}"/>
     </Grid>
 </Window>

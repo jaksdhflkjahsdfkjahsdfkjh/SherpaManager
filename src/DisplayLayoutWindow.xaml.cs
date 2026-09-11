@@ -25,8 +25,7 @@ public partial class DisplayLayoutWindow : Window
         InitializeComponent();
         _snapshot = snapshot;
 
-        // Grow to fit the content so the layout is not behind a scrollbar, but
-        // never taller than the screen it has to open on.
+        // Keep the footer reachable on shorter screens; details scroll inside it.
         MaxHeight = Math.Max(MinHeight, SystemParameters.WorkArea.Height - 60);
 
         TitleText.Text = $"{profileName} display layout";

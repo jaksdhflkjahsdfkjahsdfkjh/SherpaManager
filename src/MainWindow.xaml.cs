@@ -165,7 +165,7 @@ public partial class MainWindow : Window
         RefreshActiveProfile();
         RebuildTrayMenu();
         if (!handledInterruptedRecovery)
-            StatusText.Text = $"Profiles are stored in {_store.FilePath}";
+            StatusText.Text = "Ready. Profile changes are saved automatically.";
         await HandleStartupActivationAsync();
     }
 

@@ -1,11 +1,13 @@
 <Window x:Class="SherpaManager.ActivationPreflightWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="clr-namespace:SherpaManager.Controls"
+        Style="{StaticResource {x:Type Window}}"
         Title="Review the switch" Width="660" Height="640" MinWidth="520" MinHeight="420"
         Icon="Assets/SherpaManager.ico"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
         Background="{StaticResource WindowBrush}">
-    <Grid Margin="26">
+    <Grid Margin="24">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -18,7 +20,7 @@
                        TextWrapping="Wrap" Margin="0,8,0,0"/>
         </StackPanel>
 
-        <ScrollViewer Grid.Row="1" Margin="0,18,0,18" VerticalScrollBarVisibility="Auto"
+        <ScrollViewer Grid.Row="1" Margin="0,20,0,20" VerticalScrollBarVisibility="Auto"
                       HorizontalScrollBarVisibility="Disabled">
             <ItemsControl x:Name="SectionsList">
                 <ItemsControl.ItemTemplate>
@@ -58,13 +60,13 @@
             </ItemsControl>
         </ScrollViewer>
 
-        <Grid Grid.Row="2">
+        <Grid Grid.Row="2"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <CheckBox x:Name="SkipPreviewCheckBox" Content="Do not show this again"
                       VerticalAlignment="Center" HorizontalAlignment="Left"/>
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="16,0,0,0">
                 <Button Content="Cancel" IsCancel="True" Click="Cancel_Click" Margin="0,0,10,0"/>
                 <Button x:Name="ProceedButton" Style="{StaticResource PrimaryButton}"
-                        Content="Switch now" IsDefault="True" Click="Proceed_Click"/>
+                        Content="Switch now" IsDefault="True" Click="Proceed_Click" ui:Icon.Data="{StaticResource IconPlay}"/>
             </StackPanel>
         </Grid>
     </Grid>

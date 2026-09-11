@@ -3,7 +3,7 @@
 Sherpa Manager is a Windows utility for switching a PC between work and sim-racing setups. A profile can restore the required Windows monitor topology and captured NVIDIA Surround grid, close applications from the previous profile, and start its own ordered list of companion applications.
 
 > [!IMPORTANT]
-> Sherpa Manager 0.2 is an early release. Display switching is hardware- and driver-sensitive. Read the recovery guidance before testing a new monitor or NVIDIA Surround configuration.
+> Sherpa Manager is pre-1.0 software. Display switching is hardware- and driver-sensitive. Read the recovery guidance before testing a new monitor or NVIDIA Surround configuration.
 
 ## Features
 
@@ -57,6 +57,13 @@ Get-FileHash .\SherpaManager-v<version>-win-x64-setup.exe -Algorithm SHA256
 Compare the printed hash with the matching line in `SHA256SUMS.txt`. Releases are unsigned, so Windows SmartScreen may warn on first run; see [Known limitations](#known-limitations).
 
 Changes for each version are listed in [CHANGELOG.md](CHANGELOG.md).
+
+The **v0.7.0 development series** refreshes the desktop interface using
+[GridSherpa's](https://grid-sherpa.com/) dark charcoal and violet theme, with scalable
+icons, consistent controls, and layouts that adapt to narrower windows. The profile
+overview uses two columns when space allows. Settings and the editor scroll while
+status and recent switches stay visible. See [the UI guide](docs/UI.md) for the
+theme conventions and visual verification workflow.
 
 ## Build, test, and run
 

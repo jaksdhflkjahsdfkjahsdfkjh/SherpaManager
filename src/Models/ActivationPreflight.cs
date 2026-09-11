@@ -41,9 +41,9 @@ public sealed class ActivationPreflight
         get
         {
             if (ProblemCount > 0 && CautionCount > 0)
-                return $"{Describe(ProblemCount, "problem")} and {Describe(CautionCount, "change needing attention")}.";
+                return $"{Describe(ProblemCount, "problem")} and {Describe(CautionCount, "change")} needing attention.";
             if (ProblemCount > 0) return $"{Describe(ProblemCount, "problem")}. Activation can continue, but these entries will not work.";
-            if (CautionCount > 0) return $"{Describe(CautionCount, "change needing attention")}.";
+            if (CautionCount > 0) return $"{Describe(CautionCount, "change")} needing attention.";
             return "Nothing here needs your attention.";
         }
     }

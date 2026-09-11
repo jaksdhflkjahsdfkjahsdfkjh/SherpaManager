@@ -9,5 +9,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\SherpaManager.csproj" />
+    <Content Include="..\..\src\MainWindow.xaml" Link="UiMarkup\MainWindow.xaml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
