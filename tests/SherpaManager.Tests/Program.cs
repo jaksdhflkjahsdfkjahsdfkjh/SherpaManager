@@ -117,7 +117,12 @@ internal static partial class Program
             ("Searching finds an app by name, publisher, or path", TestInstalledCatalogSearchAsync),
             ("The application picker lists, filters, and chooses", TestApplicationPickerRendersAsync),
             ("UI layout keeps editor and settings usable at compact sizes", TestMainLayoutAsync),
-            ("UI layout keeps dialog actions and countdown visible", TestDialogLayoutAsync)
+            ("The default window height shows five applications", TestDefaultHeightShowsFiveAppsAsync),
+            ("Profile icons are transparent and the same size", TestProfileIconsMatchAsync),
+            ("Profiles are recognised by name for their logos", TestProfileKindNamesAsync),
+            ("UI layout keeps dialog actions and countdown visible", TestDialogLayoutAsync),
+            ("Capture replacement requires confirmation and cancellation preserves the profile", TestCaptureReplacementAsync),
+            ("UI layout pages long dialog lists without losing virtualization", TestDialogPagingAsync)
         };
 
         // Some assertions read numbers out of rendered text. Pinning the culture
@@ -3660,6 +3665,7 @@ internal static partial class Program
         var settings = new AppSettings();
         string lockedGlyph = string.Empty, unlockedGlyph = string.Empty;
         System.Windows.Media.Color lockedColour = default, unlockedColour = default;
+        System.Windows.Media.Color lockedBackground = default, unlockedBackground = default;
         string lockedTip = string.Empty, unlockedTip = string.Empty;
         var missingStyle = false;
 
@@ -3688,6 +3694,7 @@ internal static partial class Program
 
                 lockedGlyph = button.Content as string ?? string.Empty;
                 lockedColour = ((System.Windows.Media.SolidColorBrush)button.Foreground).Color;
+                lockedBackground = ((System.Windows.Media.SolidColorBrush)button.Background).Color;
                 lockedTip = button.ToolTip as string ?? string.Empty;
 
                 // Only the setting changes. Nothing touches the button.
@@ -3696,6 +3703,7 @@ internal static partial class Program
 
                 unlockedGlyph = button.Content as string ?? string.Empty;
                 unlockedColour = ((System.Windows.Media.SolidColorBrush)button.Foreground).Color;
+                unlockedBackground = ((System.Windows.Media.SolidColorBrush)button.Background).Color;
                 unlockedTip = button.ToolTip as string ?? string.Empty;
             }
             finally { window.Close(); }
@@ -3708,6 +3716,8 @@ internal static partial class Program
         Assert(lockedColour != unlockedColour,
             $"The two states should differ in colour as well as glyph; both were {lockedColour}.");
         Assert(lockedTip != unlockedTip, "The tooltip should say which state the button is in.");
+        Assert(lockedGlyph == "Locked" && unlockedGlyph == "Unlocked", "Reordering must have an explicit state label.");
+        Assert(lockedBackground != unlockedBackground, "Unlocking must visibly fill the button with the accent color.");
         return Task.CompletedTask;
     }
 

@@ -30,5 +30,7 @@
   <ItemGroup>
     <Resource Include="Assets\SherpaManager.ico" />
     <Resource Include="Assets\SherpaManager.png" />
+    <Resource Include="Assets\iRacing-Stacked-Color-Blue.png" />
+    <Resource Include="Assets\ACC-logo.png" />
   </ItemGroup>
 </Project>

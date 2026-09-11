@@ -18,17 +18,30 @@ Unreleased UI update.
 - Refreshed the interface around GridSherpa's charcoal surfaces, violet accents,
   typography, and consistent card spacing. Added scalable line icons to navigation,
   section headings, and common actions.
-- The profile overview uses two columns on wider windows and stacks on compact
-  windows. Audio fields resize with their cards, action toolbars wrap, and the
-  application list has an empty state and more readable rows.
+- The profile overview and settings fit without page scrollbars at a minimum
+  1200×880 window size. The display card matches the combined audio and quick-switching
+  height. The application table receives the remaining space and owns the scrollbars.
 - Settings are grouped into window and startup, display safety, application launch,
-  and diagnostics. Both pages scroll, with status and recent switches always visible.
+  and diagnostics, with status and recent switches always visible.
 - Unified text fields, dropdowns, scrollbars, button states, and keyboard focus.
   Dropdowns now honor vertical spacing and clip long selected device names.
 - Dialogs share the same spacing and control styles. The application picker keeps
   its actions separate at minimum width; display confirmation sizes to its content
   so the rollback countdown and both actions remain visible. Display diagrams scale
   down to fit narrower windows.
+- Long dialog and profile lists use Previous/Next actions while retaining list
+  virtualization. Reordering has explicit Locked/Unlocked labels and a filled active
+  state. iRacing uses the supplied stacked color logo, shown whole and transparent on
+  the sidebar; ACC uses the supplied Assetto Corsa Competizione logo the same way, for a
+  profile named "ACC" or "Assetto Corsa Competizione"; Work uses a suitcase icon. All
+  three are drawn at the same width.
+- The window opens tall enough to show five applications without paging (1240×956,
+  up from 1240×900, which showed four). The display summary box is now a fixed two
+  lines: it used to size to its text, so selecting a profile with a captured layout
+  made the card a line taller and cost the application table a row. The 1200×880
+  minimum is unchanged.
+- Capturing over an existing saved display layout asks for confirmation before
+  changing the snapshot, verification, or Surround preference. Cancel preserves all three.
 - Added off-screen layout regression checks and optional PNG previews for standard
   and compact windows. Display switching and profile data formats are unchanged.
 

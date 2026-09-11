@@ -61,8 +61,9 @@ Changes for each version are listed in [CHANGELOG.md](CHANGELOG.md).
 The **v0.7.0 development series** refreshes the desktop interface using
 [GridSherpa's](https://grid-sherpa.com/) dark charcoal and violet theme, with scalable
 icons, consistent controls, and layouts that adapt to narrower windows. The profile
-overview uses two columns when space allows. Settings and the editor scroll while
-status and recent switches stay visible. See [the UI guide](docs/UI.md) for the
+overview and settings use two columns and fit without page scrollbars at the
+1200×880 minimum window size. Only the application table has scrollbars; long dialog
+lists have Previous/Next actions. See [the UI guide](docs/UI.md) for the
 theme conventions and visual verification workflow.
 
 ## Build, test, and run
@@ -98,6 +99,11 @@ The `build/` directory is intentionally ignored. Packaged binaries are published
 4. Use **Test**. The layout remains temporary until you choose **Keep layout**; otherwise Sherpa restores the previous topology after 10 seconds.
 
 **Capture current** stores the complete active Windows CCD topology. That includes the same active-monitor selection represented by Windows' **Show only on 1/2** choices, plus primary display, positions, resolution, orientation, and refresh rate. Applying the profile disables paths that were inactive when it was captured. The monitors remain physically connected; “disabled” means removed from the active Windows desktop, not physically powered off.
+
+If a profile already has a saved layout, **Capture current** shows the saved and
+new summaries and asks before replacing it. **Cancel** keeps the snapshot, its
+verification, and the Surround preference. A first capture needs no overwrite
+confirmation. Capturing itself does not change the monitors.
 
 ### NVIDIA Surround triples
 
@@ -157,7 +163,7 @@ Entries that will not work are marked in the editor: the row number is replaced 
 
 Applications start in the order they are listed, and the grid numbers them so that order is visible. Each one waits for the previous to start before it begins, so putting an application lower in the list is all that "start it after that one" requires.
 
-Reorder with the arrow buttons, or by dragging a row. Dragging is locked by default so that a stray drag while editing cannot silently change the order; the padlock button beside the arrows unlocks it, and the choice is remembered; it turns and changes colour when reordering is unlocked. The columns do not sort, because sorting the view would have shown an order that is not the order things start in.
+Reorder with the arrow buttons, or by dragging a row. Dragging is locked by default so that a stray drag while editing cannot silently change the order. The button beside the arrows explicitly reads **Locked** or **Unlocked**; unlocking fills it violet and shows an open padlock, and the choice is remembered. The columns do not sort, because sorting the view would have shown an order that is not the order things start in.
 
 **Settings → Before starting the next app, wait for** controls how much waiting happens. The number beside it is a ceiling, not a delay: Sherpa gives up and warns after it, and never sleeps for it.
 

@@ -687,7 +687,7 @@ public partial class MainWindow : Window
 
     private async void CaptureDisplay_Click(object sender, RoutedEventArgs e)
     {
-        if (SelectedProfile is not { } profile) return;
+        if (SelectedProfile is not { } profile || _isBusy) return;
         try
         {
             var captured = _displays.Capture();
@@ -695,14 +695,9 @@ public partial class MainWindow : Window
                 throw new InvalidOperationException(
                     $"NVIDIA Surround is active, but Sherpa could not capture its complete grid. {incomplete.Description}");
 
-            profile.Display = captured;
-            if (captured.NvidiaSurround is { StatusKnown: true } surround)
-                profile.NvidiaSurroundMode = (surround.HasConfiguredTopology, surround.Enabled) switch
-                {
-                    (true, true) => NvidiaSurroundMode.RequireEnabled,
-                    (true, false) => NvidiaSurroundMode.RequireDisabled,
-                    _ => NvidiaSurroundMode.Ignore
-                };
+            if (!DisplayCaptureUpdate.Apply(profile, captured, () =>
+                new CaptureConfirmationWindow(profile.Name, profile.Display!.Summary, captured.Summary)
+                { Owner = this }.ShowDialog() == true)) return;
             if (await SaveAsync())
                 StatusText.Text = $"Captured the Windows topology and supported NVIDIA display settings for {profile.Name}.";
         }
