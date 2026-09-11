@@ -117,6 +117,7 @@ internal static partial class Program
             ("Searching finds an app by name, publisher, or path", TestInstalledCatalogSearchAsync),
             ("The application picker lists, filters, and chooses", TestApplicationPickerRendersAsync),
             ("UI layout keeps editor and settings usable at compact sizes", TestMainLayoutAsync),
+            ("Layout previews keep their size on a smaller screen", TestPreviewIgnoresScreenSizeAsync),
             ("The default window height shows five applications", TestDefaultHeightShowsFiveAppsAsync),
             ("Profile icons are transparent and the same size", TestProfileIconsMatchAsync),
             ("Profiles are recognised by name for their logos", TestProfileKindNamesAsync),

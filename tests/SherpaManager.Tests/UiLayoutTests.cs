@@ -83,6 +83,44 @@ internal static partial class Program
     }
 
     /// <summary>
+    /// A layout preview is the size its test asks for, even on a screen too small
+    /// to hold a window that size.
+    /// </summary>
+    /// <remarks>
+    /// The CI runner's desktop is shorter than the editor, so Windows shrank the
+    /// window under test until its own minimum stopped it, at 1200 x 880. The
+    /// default-height check then counted rows at the wrong size and failed, while
+    /// passing on any machine with a large enough screen. This reproduces that on
+    /// whatever machine it runs on, by asking for more than the screen has.
+    /// </remarks>
+    private static Task TestPreviewIgnoresScreenSizeAsync()
+    {
+        OnUiThread(() =>
+        {
+            var screen = SystemParameters.VirtualScreenHeight;
+            var requested = (Width: 1240d, Height: Math.Ceiling(screen) + 400);
+            var window = new Window { Width = requested.Width, Height = requested.Height, MinWidth = 1200, MinHeight = 880 };
+            PreparePreview(window);
+            try
+            {
+                ShowPreview(window);
+                window.UpdateLayout();
+                Assert(Math.Abs(window.ActualHeight - requested.Height) < 1,
+                    $"Asked for {requested.Height} on a {screen}-high screen and got {window.ActualHeight}: " +
+                    "the preview was fitted to the screen, so layout checks would measure the wrong size.");
+
+                // Resizing after it is shown, as the compact-size checks do, must hold too.
+                window.Height = requested.Height + 100;
+                window.UpdateLayout();
+                Assert(Math.Abs(window.ActualHeight - (requested.Height + 100)) < 1,
+                    $"Resized to {requested.Height + 100} and got {window.ActualHeight}.");
+            }
+            finally { window.Close(); }
+        });
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
     /// The window opens tall enough to show five applications without paging.
     /// </summary>
     /// <remarks>
@@ -98,7 +136,12 @@ internal static partial class Program
             try
             {
                 var declared = (window.Width, window.Height);
-                window.Show();
+                ShowPreview(window);
+                // If the window is not the size the markup declares, the row count
+                // below means nothing, so say that plainly rather than miscount.
+                Assert(Math.Abs(window.ActualWidth - declared.Width) < 1 && Math.Abs(window.ActualHeight - declared.Height) < 1,
+                    $"The preview came out {window.ActualWidth} x {window.ActualHeight} instead of its declared " +
+                    $"{declared.Width} x {declared.Height}, so the layout cannot be judged at the default size.");
                 var profile = (SwitchProfile)((ListBox)window.FindName("ProfilesList")).SelectedItem;
                 // A captured layout, whose summary fills both lines of its box. The first
                 // version of this test used a profile with none, got a one-line placeholder,
@@ -150,7 +193,7 @@ internal static partial class Program
             PreparePreview(window);
             try
             {
-                window.Show();
+                ShowPreview(window);
                 window.UpdateLayout();
                 var list = (ListBox)window.FindName("ProfilesList");
 
@@ -233,7 +276,7 @@ internal static partial class Program
             PreparePreview(window);
             try
             {
-                window.Show();
+                ShowPreview(window);
                 foreach (var size in new[] { (1240d, 900d), (1200d, 880d) })
                 {
                     window.Width = size.Item1;
@@ -305,7 +348,7 @@ internal static partial class Program
             PreparePreview(confirmation);
             try
             {
-                confirmation.Show();
+                ShowPreview(confirmation);
                 confirmation.UpdateLayout();
                 AssertInside((FrameworkElement)confirmation.FindName("CountdownText"), confirmation);
                 foreach (var button in VisualChildren<Button>(confirmation)) AssertInside(button, confirmation);
@@ -317,7 +360,7 @@ internal static partial class Program
             PreparePreview(picker);
             try
             {
-                picker.Show();
+                ShowPreview(picker);
                 picker.UpdateLayout();
                 var buttons = VisualChildren<Button>(picker).ToList();
                 foreach (var button in buttons) AssertInside(button, picker);
@@ -332,7 +375,7 @@ internal static partial class Program
             PreparePreview(capture);
             try
             {
-                capture.Show();
+                ShowPreview(capture);
                 capture.UpdateLayout();
                 Assert(((Button)capture.FindName("CancelButton")).IsDefault, "Enter must default to cancelling an overwrite.");
                 foreach (var button in VisualChildren<Button>(capture)) AssertInside(button, capture);
@@ -353,7 +396,7 @@ internal static partial class Program
             PreparePreview(window);
             try
             {
-                window.Show();
+                ShowPreview(window);
                 window.UpdateLayout();
                 var viewport = VisualChildren<ScrollViewer>(list).First();
                 var next = VisualChildren<Button>(pages).Single(b => Equals(b.Content, "Next"));
@@ -381,6 +424,55 @@ internal static partial class Program
         window.WindowStartupLocation = WindowStartupLocation.Manual;
         window.Left = -32000;
         window.Top = -32000;
+
+        // Windows will not make a window larger than the screen it is on, and the
+        // window's own minimum then decides its size instead. On a CI runner, whose
+        // desktop is shorter than the editor, that silently turned the 1240 x 956
+        // window under test into 1200 x 880 and the default-height check failed on
+        // two rows it was never meant to see; a 1080p laptop at 125% scaling would
+        // do the same. Lifting the limit keeps every preview the size its test asks
+        // for, so layout is measured the same way on any machine.
+        window.SourceInitialized += (_, _) =>
+            System.Windows.Interop.HwndSource.FromHwnd(new System.Windows.Interop.WindowInteropHelper(window).Handle)
+                .AddHook(LiftTrackingLimit);
+    }
+
+    /// <summary>
+    /// Shows a preview at the size it asked for.
+    /// </summary>
+    /// <remarks>
+    /// The window's first size is fitted to the screen while it is being created,
+    /// before <see cref="PreparePreview"/> can lift the limit, and WPF reapplies
+    /// that fitted size once it is shown; resizing from inside SourceInitialized
+    /// was tried and is undone. So the requested size is applied again afterwards,
+    /// when the limit is already gone.
+    /// </remarks>
+    private static void ShowPreview(Window window)
+    {
+        var requested = (window.Width, window.Height);
+        window.Show();
+        // Dialogs that size to their content have no size of their own to restore.
+        if (window.SizeToContent == SizeToContent.Manual && !double.IsNaN(requested.Width) && !double.IsNaN(requested.Height))
+        {
+            window.Width = requested.Width;
+            window.Height = requested.Height;
+        }
+        window.UpdateLayout();
+    }
+
+    private const int WmGetMinMaxInfo = 0x0024;
+
+    /// <summary>
+    /// Raises MINMAXINFO.ptMaxTrackSize, the screen-derived ceiling on a window's
+    /// size, so it no longer applies. It is the fifth POINT in the structure.
+    /// </summary>
+    private static IntPtr LiftTrackingLimit(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (message != WmGetMinMaxInfo) return IntPtr.Zero;
+        System.Runtime.InteropServices.Marshal.WriteInt32(lParam, 32, 100_000);
+        System.Runtime.InteropServices.Marshal.WriteInt32(lParam, 36, 100_000);
+        // Not handled: WPF still applies the window's own MinWidth and MinHeight.
+        return IntPtr.Zero;
     }
 
     private static Rect BoundsIn(FrameworkElement element, Visual ancestor) =>
