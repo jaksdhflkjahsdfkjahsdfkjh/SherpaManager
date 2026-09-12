@@ -1,12 +1,22 @@
 <Window x:Class="SherpaManager.CaptureConfirmationWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="clr-namespace:SherpaManager.Controls"
         Style="{StaticResource {x:Type Window}}" Title="Replace saved display layout?"
-        Width="580" SizeToContent="Height" ResizeMode="NoResize" Icon="Assets/SherpaManager.ico"
+        Width="580" SizeToContent="Height" MaxHeight="510" ResizeMode="NoResize" Icon="Assets/SherpaManager.ico"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
-    <StackPanel Margin="24">
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <StackPanel>
         <TextBlock Text="Replace the saved layout?" FontSize="22" FontWeight="SemiBold"/>
         <TextBlock x:Name="ProfileText" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,8,0,20"/>
+        </StackPanel>
+        <ui:PagedContent Grid.Row="1">
         <Border Style="{StaticResource Card}">
             <StackPanel>
                 <TextBlock Text="SAVED LAYOUT" Foreground="{StaticResource MutedTextBrush}" FontSize="11"/>
@@ -25,11 +35,12 @@
                     Margin="0,8,0,0"/>
             </StackPanel>
         </Border>
-        <TextBlock Text="This replaces the saved setup and its verification. Your monitors will not change. Test the new capture before switching."
+        </ui:PagedContent>
+        <TextBlock Grid.Row="2" Text="This replaces the saved setup and its verification. Your monitors will not change. Test the new capture before switching."
                    TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,20"/>
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
             <Button x:Name="CancelButton" Content="Cancel" IsCancel="True" IsDefault="True" Margin="0,0,8,0"/>
             <Button x:Name="ReplaceButton" Content="Replace saved layout" Style="{StaticResource PrimaryButton}" Click="Replace_Click"/>
         </StackPanel>
-    </StackPanel>
+    </Grid>
 </Window>

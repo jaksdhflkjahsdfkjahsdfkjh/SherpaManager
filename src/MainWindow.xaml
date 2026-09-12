@@ -6,8 +6,8 @@
     Title="Sherpa Manager"
     Width="1240"
     Height="956"
-    MinWidth="1200"
-    MinHeight="880"
+    MinWidth="900"
+    MinHeight="480"
     Icon="Assets/SherpaManager.ico"
     Background="{StaticResource WindowBrush}"
     WindowStartupLocation="CenterScreen"
@@ -213,8 +213,9 @@
                     </ControlTemplate>
                 </TabControl.Template>
                 <TabItem>
-                    <Grid x:Name="ProfilePage" Margin="20,20,20,16">
+                    <ui:ResponsiveEditor x:Name="ProfilePage" Margin="20,20,20,16">
                         <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
@@ -256,7 +257,7 @@
                                 VerticalAlignment="Top"
                                 Margin="20,0,0,0"/>
                         </Grid>
-                        <Grid x:Name="OverviewGrid" Grid.Row="1" Margin="0,0,0,12">
+                        <Grid x:Name="OverviewGrid" Grid.Row="2" Margin="0,0,0,12">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="16" />
@@ -427,7 +428,7 @@
                                 </StackPanel>
                             </Border>
                         </Grid>
-                        <Border Style="{StaticResource Card}" Padding="16" Margin="0" Grid.Row="2">
+                        <Border x:Name="ApplicationsCard" Style="{StaticResource Card}" Padding="16" Margin="0" Grid.Row="3">
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
@@ -578,7 +579,7 @@
                                 </Grid>
                             </Grid>
                         </Border>
-                    </Grid>
+                    </ui:ResponsiveEditor>
                 </TabItem>
                 <TabItem>
                     <Grid x:Name="SettingsPage" Margin="20">
@@ -594,7 +595,8 @@
                                 FontSize="12"
                                 Margin="0,8,0,24"/>
                         </StackPanel>
-                        <Grid Grid.Row="1">
+                        <ui:PagedContent Grid.Row="1">
+                        <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="16" />
@@ -623,6 +625,15 @@
                                             Margin="26,6,0,16"/>
                                         <CheckBox x:Name="StartWithWindowsCheckBox"
                                             Content="Start Sherpa Manager when Windows starts"
+                                            Checked="SettingsCheckBox_Changed"
+                                            Unchecked="SettingsCheckBox_Changed"/>
+                                        <!-- Only meaningful for the launch Windows makes, so it follows the
+                                             startup choice above rather than standing on its own. -->
+                                        <CheckBox x:Name="StartMinimizedCheckBox"
+                                            Content="Start minimized"
+                                            Margin="26,10,0,0"
+                                            IsEnabled="{Binding IsChecked, ElementName=StartWithWindowsCheckBox}"
+                                            ToolTip="When Windows starts Sherpa, it opens in the tray if it is kept there, or minimized on the taskbar otherwise."
                                             Checked="SettingsCheckBox_Changed"
                                             Unchecked="SettingsCheckBox_Changed"/>
                                         <Grid Margin="0,16,0,0">
@@ -752,6 +763,7 @@
                                 </Border>
                             </StackPanel>
                         </Grid>
+                        </ui:PagedContent>
                     </Grid>
                 </TabItem>
             </TabControl>

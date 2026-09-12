@@ -32,7 +32,8 @@ public sealed class StartupRegistrationService(IDiagnosticLog? diagnostics = nul
     }
 
     /// <summary>Returns whether the registration now matches <paramref name="enabled"/>.</summary>
-    public bool SetRegistered(bool enabled)
+    /// <param name="minimized">Whether Windows should start Sherpa minimized.</param>
+    public bool SetRegistered(bool enabled, bool minimized = false)
     {
         try
         {
@@ -54,8 +55,11 @@ public sealed class StartupRegistrationService(IDiagnosticLog? diagnostics = nul
                 return false;
             }
 
-            key.SetValue(ValueName, $"\"{executable}\"", RegistryValueKind.String);
-            _diagnostics.Write("info", "startup.registered");
+            key.SetValue(ValueName, BuildCommand(executable, minimized), RegistryValueKind.String);
+            _diagnostics.Write("info", "startup.registered", data: new Dictionary<string, object?>
+            {
+                ["minimized"] = minimized
+            });
             return true;
         }
         catch (Exception exception)
@@ -67,4 +71,15 @@ public sealed class StartupRegistrationService(IDiagnosticLog? diagnostics = nul
             return false;
         }
     }
+
+    /// <summary>
+    /// The command Windows runs at sign-in: the quoted executable, and the
+    /// minimized switch when asked for.
+    /// </summary>
+    /// <remarks>
+    /// The installer's uninstaller recognises its own entry by this quoted path at
+    /// the start of the command, so anything added here has to come after it.
+    /// </remarks>
+    internal static string BuildCommand(string executable, bool minimized) =>
+        minimized ? $"\"{executable}\" {CommandLineOptions.MinimizedSwitch}" : $"\"{executable}\"";
 }

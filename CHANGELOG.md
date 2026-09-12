@@ -2,12 +2,55 @@
 
 All notable changes to Sherpa Manager are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and releases follow
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html). While the project is
-pre-1.0, minor versions may still contain breaking changes to profile data.
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html). Starting with 1.0,
+breaking changes to supported profile data require a major version change and
+documented migration guidance.
 
 Releases are published from tags of the form `v<version>`. The tag, the
 `<Version>` in [Directory.Build.props](Directory.Build.props), and the heading in
 this file must all agree; the release workflow fails the build when they do not.
+
+## 1.0.0
+
+First stable release, including the v0.7 interface and display-switching features.
+Existing v0.7.2 profiles remain compatible; no profile migration is required.
+
+### Added
+
+- **Settings -> Start minimized**, beneath the Windows startup option. When Windows
+  starts Sherpa at sign-in it opens minimized: in the tray if Sherpa is kept there,
+  on the taskbar otherwise. Opening Sherpa yourself still shows the window. The
+  startup entry carries a `--minimized` switch, and uninstalling still removes the
+  entry the installation created.
+- Compact profile sections for Display, Audio & shortcuts, and Applications.
+  Smaller desktops retain readable controls without page scrollbars; larger
+  windows retain the full overview and aligned display/audio cards.
+- Per-monitor DPI awareness and window fitting after monitor, taskbar, and
+  scaling changes. Dialogs fit smaller work areas while retaining their actions.
+
+### Fixed
+
+- Long display summaries no longer push the rollback countdown or confirmation
+  actions out of view. Paged content overlaps between pages so controls at a
+  page boundary can be read and used.
+- The package smoke test now uses a disposable profile directory and checks
+  compiled dialogs and embedded logos. It never loads personal profiles, changes
+  monitors, or activates a startup profile, and works without NVIDIA hardware.
+- Uninstall removes the current user's Windows startup entry only when it points
+  to the installation being removed. Startup entries for another copy and saved
+  profiles are preserved.
+- The installer can be compiled directly in the Inno Setup IDE. It reads the
+  published application version and rejects a stale build that does not match
+  `Directory.Build.props`.
+
+### Changed
+
+- Release builds validate all four version fields and require matching changelog
+  notes. Each published executable is checked for its x64 architecture, embedded
+  version, and successful smoke-test exit before packaging proceeds.
+- Simplified the README and included a first-run guide with downloads.
+- The workflow creates a stable draft for review and uses a pinned, hash-verified
+  installer compiler. Archives include the first-run guide and license.
 
 ## 0.7.2
 

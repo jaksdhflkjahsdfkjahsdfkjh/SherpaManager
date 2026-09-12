@@ -15,10 +15,10 @@ public sealed class ProfileStore
 
     public string FilePath { get; }
 
-    public ProfileStore()
+    public ProfileStore(string? dataDirectory = null)
     {
         var overrideDirectory = Environment.GetEnvironmentVariable("SHERPA_MANAGER_DATA_DIR");
-        var directory = string.IsNullOrWhiteSpace(overrideDirectory)
+        var directory = dataDirectory is not null ? Path.GetFullPath(dataDirectory) : string.IsNullOrWhiteSpace(overrideDirectory)
             ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "SherpaManager")
             : Path.GetFullPath(overrideDirectory);
         FilePath = Path.Combine(directory, "profiles.json");

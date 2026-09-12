@@ -8,8 +8,16 @@ namespace SherpaManager.Services;
 public sealed record CommandLineOptions
 {
     public const string ActivateSwitch = "--activate";
+    public const string MinimizedSwitch = "--minimized";
 
     public string? ActivateProfile { get; init; }
+
+    /// <summary>
+    /// Start with the window minimized. Written into the Windows startup entry
+    /// when the user asks for it, so it applies to the launch Windows makes at
+    /// sign-in and not to opening Sherpa from the Start menu.
+    /// </summary>
+    public bool StartMinimized { get; init; }
     public bool SmokeTest { get; init; }
     public bool ShowHelp { get; init; }
     public IReadOnlyList<string> Unknown { get; init; } = [];
@@ -20,6 +28,7 @@ public sealed record CommandLineOptions
 
         string? activate = null;
         var smokeTest = false;
+        var startMinimized = false;
         var showHelp = false;
         var unknown = new List<string>();
 
@@ -43,6 +52,10 @@ public sealed record CommandLineOptions
                     else unknown.Add(argument);
                     break;
 
+                case MinimizedSwitch:
+                    startMinimized = true;
+                    break;
+
                 case "--smoke-test":
                     smokeTest = true;
                     break;
@@ -64,6 +77,7 @@ public sealed record CommandLineOptions
         {
             ActivateProfile = activate,
             SmokeTest = smokeTest,
+            StartMinimized = startMinimized,
             ShowHelp = showHelp,
             Unknown = unknown
         };
@@ -86,6 +100,7 @@ public sealed record CommandLineOptions
 
           SherpaManager.exe                      Open the window.
           SherpaManager.exe --activate <profile>  Switch to a profile by name.
+          SherpaManager.exe --minimized           Open minimized, as Windows does at sign-in.
           SherpaManager.exe --help                Show this message.
 
         The profile name is matched without case sensitivity. If Sherpa Manager is

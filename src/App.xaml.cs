@@ -37,14 +37,12 @@ public partial class App : System.Windows.Application
 
         if (options.SmokeTest)
         {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
             try
             {
-                var store = new ProfileStore();
-                var document = await store.LoadAsync();
-                await store.SaveAsync(document);
-                using var displayService = new DisplayConfigurationService(diagnostics: _diagnostics);
-                var display = displayService.Capture();
-                Shutdown(document.Profiles.Count >= 3 && display.Paths.Count > 0 ? 0 : 2);
+                PackageSmokeTest.ValidateResources();
+                await PackageSmokeTest.ValidateStorageAsync();
+                Shutdown(0);
             }
             catch (Exception exception)
             {
@@ -81,10 +79,22 @@ public partial class App : System.Windows.Application
             }
         }
 
-        var window = new MainWindow { PendingActivationRequest = options.ActivateProfile };
+        var window = new MainWindow
+        {
+            PendingActivationRequest = options.ActivateProfile,
+            StartedMinimized = options.StartMinimized
+        };
         MainWindow = window;
         _singleInstance.StartListening(payload =>
             window.Dispatcher.InvokeAsync(() => window.HandleActivationRequestAsync(payload)).Task.Unwrap());
+        // Started by Windows at sign-in with "Start minimized". The window is still
+        // shown, minimized: loading profiles, registering hotkeys, and activating a
+        // startup profile all happen once it has loaded.
+        if (options.StartMinimized)
+        {
+            window.ShowActivated = false;
+            window.WindowState = WindowState.Minimized;
+        }
         window.Show();
         _diagnostics.Write("info", "application.ready");
     }
