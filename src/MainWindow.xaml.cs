@@ -54,6 +54,9 @@ public partial class MainWindow : Window
     /// <summary>Profile name requested on the command line, applied once profiles have loaded.</summary>
     public string? PendingActivationRequest { get; set; }
 
+    /// <summary>Set when Windows started Sherpa with the minimized switch.</summary>
+    public bool StartedMinimized { get; set; }
+
     public MainWindow()
     {
         _diagnostics = DiagnosticsService.Current;
@@ -148,6 +151,7 @@ public partial class MainWindow : Window
         // entry from Task Manager without Sherpa ever knowing.
         _document.Settings.StartWithWindows = _startup.IsRegistered;
         StartWithWindowsCheckBox.IsChecked = _document.Settings.StartWithWindows;
+        StartMinimizedCheckBox.IsChecked = _document.Settings.StartMinimized;
         ShowLaunchDelaysCheckBox.IsChecked = _document.Settings.ShowLaunchDelays;
         ApplyDragReorderState();
         LaunchReadinessCombo.SelectedValue = _document.Settings.LaunchReadiness;
@@ -164,6 +168,11 @@ public partial class MainWindow : Window
         catch (Exception ex) { ShowError("Could not save profiles", ex); }
         RefreshActiveProfile();
         RebuildTrayMenu();
+        // Started by Windows with "Start minimized": the window was shown minimized
+        // so that everything above could run, and now goes where the user keeps
+        // Sherpa when it is out of the way.
+        if (ChooseStartupPlacement(StartedMinimized, _document.Settings.MinimizeToTrayOnClose) == StartupPlacement.Tray)
+            Hide();
         if (!handledInterruptedRecovery)
             StatusText.Text = "Ready. Profile changes are saved automatically.";
         await HandleStartupActivationAsync();
@@ -773,13 +782,10 @@ public partial class MainWindow : Window
     private Task<bool> ConfirmDisplayAsync(DisplaySnapshot snapshot)
     {
         EnsureWindowIsVisible();
-        var workArea = SystemParameters.WorkArea;
         var confirmation = new DisplayConfirmationWindow(snapshot.Summary)
         {
             Owner = this,
-            WindowStartupLocation = WindowStartupLocation.Manual,
-            Left = workArea.Left + Math.Max(0, (workArea.Width - 520) / 2),
-            Top = workArea.Top + Math.Max(0, (workArea.Height - 260) / 2)
+            WindowStartupLocation = WindowStartupLocation.CenterOwner
         };
         confirmation.ShowDialog();
         return Task.FromResult(confirmation.KeepLayout);
@@ -1189,7 +1195,13 @@ public partial class MainWindow : Window
         ApplyLaunchDelayVisibility();
 
         var wantsStartup = StartWithWindowsCheckBox.IsChecked == true;
-        if (wantsStartup != _startup.IsRegistered && !_startup.SetRegistered(wantsStartup))
+        var wantsMinimized = StartMinimizedCheckBox.IsChecked == true;
+        // The switch lives in the Run command itself, so a change to either choice
+        // rewrites it.
+        var minimizedChanged = wantsMinimized != _document.Settings.StartMinimized;
+        _document.Settings.StartMinimized = wantsMinimized;
+        if ((wantsStartup != _startup.IsRegistered || (wantsStartup && minimizedChanged)) &&
+            !_startup.SetRegistered(wantsStartup, wantsMinimized))
         {
             StatusText.Text = "Windows startup could not be changed. Check that the registry is writable.";
             _loadingSettings = true;
@@ -1372,6 +1384,19 @@ public partial class MainWindow : Window
         return _acceptActivation;
     }
 
+    /// <summary>Where the window goes once it has loaded.</summary>
+    internal enum StartupPlacement { Normal, Minimized, Tray }
+
+    /// <summary>
+    /// A minimized start follows the user's existing choice of where Sherpa lives
+    /// when it is out of the way: the tray if closing keeps it there, the taskbar
+    /// otherwise.
+    /// </summary>
+    internal static StartupPlacement ChooseStartupPlacement(bool startedMinimized, bool keepInTray) =>
+        !startedMinimized ? StartupPlacement.Normal
+        : keepInTray ? StartupPlacement.Tray
+        : StartupPlacement.Minimized;
+
     private void Window_StateChanged(object? sender, EventArgs e)
     {
         if (WindowState != WindowState.Minimized) _lastVisibleState = WindowState;
@@ -1379,18 +1404,7 @@ public partial class MainWindow : Window
 
     private void EnsureWindowIsVisible()
     {
-        if (!IsLoaded) return;
-        var width = ActualWidth > 0 ? ActualWidth : Width;
-        var height = ActualHeight > 0 ? ActualHeight : Height;
-        var virtualDesktop = new Rect(SystemParameters.VirtualScreenLeft, SystemParameters.VirtualScreenTop,
-            SystemParameters.VirtualScreenWidth, SystemParameters.VirtualScreenHeight);
-        var windowBounds = new Rect(Left, Top, Math.Max(1, width), Math.Max(1, height));
-        if (virtualDesktop.IntersectsWith(windowBounds)) return;
-
-        var workArea = SystemParameters.WorkArea;
-        WindowState = WindowState.Normal;
-        Left = workArea.Left + Math.Max(0, (workArea.Width - width) / 2);
-        Top = workArea.Top + Math.Max(0, (workArea.Height - height) / 2);
+        WindowPlacement.EnsureVisible(this);
     }
 
     private void Window_Closing(object? sender, CancelEventArgs e)

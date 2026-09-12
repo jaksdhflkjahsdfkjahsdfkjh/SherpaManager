@@ -19,6 +19,8 @@ public static class WindowTheme
     public static void ApplyDarkTitleBar(nint windowHandle)
     {
         if (windowHandle == 0) return;
+        if (System.Windows.Interop.HwndSource.FromHwnd(windowHandle)?.RootVisual is System.Windows.Window window)
+            WindowPlacement.Attach(window, windowHandle);
 
         var enabled = 1;
         if (DwmSetWindowAttribute(windowHandle, UseImmersiveDarkMode, ref enabled, sizeof(int)) != 0)

@@ -11,6 +11,7 @@ public sealed class AppSettings : ObservableObject
     private bool _confirmDisplayChanges = true;
     private bool _showActivationPreview = true;
     private bool _startWithWindows;
+    private bool _startMinimized;
     private Guid? _activateProfileOnStartup;
     private int _displaySettleDelayMs = DefaultDisplaySettleDelayMs;
     private bool _showLaunchDelays;
@@ -40,6 +41,17 @@ public sealed class AppSettings : ObservableObject
     {
         get => _startWithWindows;
         set => SetProperty(ref _startWithWindows, value);
+    }
+
+    /// <summary>
+    /// Whether Windows starts Sherpa minimized at sign-in: in the tray when it is
+    /// kept there, on the taskbar otherwise. Opening Sherpa from the Start menu
+    /// still shows the window.
+    /// </summary>
+    public bool StartMinimized
+    {
+        get => _startMinimized;
+        set => SetProperty(ref _startMinimized, value);
     }
 
     /// <summary>

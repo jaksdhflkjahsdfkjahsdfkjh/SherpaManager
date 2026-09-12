@@ -22,6 +22,36 @@
         <SolidColorBrush x:Key="AccentHoverBrush" Color="#5840FF"/>
         <SolidColorBrush x:Key="SuccessBrush" Color="#4FE0C0"/>
         <SolidColorBrush x:Key="ControlBorderBrush" Color="#4A4856"/>
+        <Style x:Key="SectionTab" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="Background" Value="{StaticResource Surface2Brush}"/>
+            <Setter Property="MinHeight" Value="36"/>
+            <Setter Property="Padding" Value="12,8"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="Surface" Background="{TemplateBinding Background}" CornerRadius="6"
+                                BorderBrush="{StaticResource ControlBorderBrush}" BorderThickness="1" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center" RecognizesAccessKey="True"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter Property="Background" Value="{StaticResource AccentSoftBrush}"/>
+                                <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
+                                <Setter TargetName="Surface" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Surface" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Surface" Property="BorderThickness" Value="2"/>
+                                <Setter TargetName="Surface" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
         <!-- GridSherpa's 24-unit line language; native vectors remain crisp at any DPI. -->
         <ui:ProfileKindConverter x:Key="ProfileKindConverter"/>
         <Geometry x:Key="IconWork">M3,7 L21,7 L21,21 L3,21 Z M8,7 L8,3 L16,3 L16,7 M3,12 Q12,17 21,12 M12,13 L12,17</Geometry>

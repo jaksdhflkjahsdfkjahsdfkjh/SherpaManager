@@ -5,8 +5,8 @@
     Style="{StaticResource {x:Type Window}}"
     Title="Display layout"
     Width="820"
-    MinWidth="760"
-    MinHeight="740"
+    MinWidth="600"
+    MinHeight="420"
     Height="800"
     Icon="Assets/SherpaManager.ico"
     WindowStartupLocation="CenterOwner"
@@ -20,7 +20,8 @@
         </Grid.RowDefinitions>
         <StackPanel>
             <TextBlock x:Name="TitleText" FontSize="22" FontWeight="SemiBold" TextWrapping="Wrap" />
-            <TextBlock x:Name="SummaryText" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,8,0,0" />
+            <TextBlock x:Name="SummaryText" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,8,0,0"
+                MaxHeight="60" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
         </StackPanel>
         <ui:PagedContent Grid.Row="1" Margin="0,20,0,20">
             <StackPanel>

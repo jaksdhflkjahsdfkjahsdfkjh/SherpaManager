@@ -22,6 +22,9 @@ internal static partial class Program
             ("A shell handler is not mistaken for the app it launches", TestShellHandlerIsolationAsync),
             ("Untrackable scripts report lifecycle limitations", TestUntrackableScriptWarningAsync),
             ("Settings persist", TestSettingsPersistenceAsync),
+            ("Windows is told to start Sherpa minimized", TestStartupCommandAsync),
+            ("A minimized start goes to the tray or the taskbar", TestStartupPlacementAsync),
+            ("Start minimized follows the Windows startup choice", TestStartMinimizedFollowsStartupAsync),
             ("Diagnostics redact paths and preserve native error codes", TestDiagnosticsRedactionAsync),
             ("Diagnostics rotate within their file limit", TestDiagnosticsRotationAsync),
             ("Copied diagnostics contain a redacted live summary", TestDiagnosticsReportAsync),
@@ -123,7 +126,12 @@ internal static partial class Program
             ("Profiles are recognised by name for their logos", TestProfileKindNamesAsync),
             ("UI layout keeps dialog actions and countdown visible", TestDialogLayoutAsync),
             ("Capture replacement requires confirmation and cancellation preserves the profile", TestCaptureReplacementAsync),
-            ("UI layout pages long dialog lists without losing virtualization", TestDialogPagingAsync)
+            ("UI layout pages long dialog lists without losing virtualization", TestDialogPagingAsync),
+            ("Package smoke checks preserve personal profiles", TestPackageSmokeIsolationAsync),
+            ("Package smoke checks load compiled UI resources", TestPackageSmokeResourcesAsync),
+            ("Compact desktop sections remain usable at scaled screen sizes", TestResponsiveDesktopAsync),
+            ("Windows fit monitor work areas after scaling and disconnection", TestWindowWorkAreaAsync),
+            ("Compact safety dialogs retain actions with long display summaries", TestCompactSafetyDialogsAsync)
         };
 
         // Some assertions read numbers out of rendered text. Pinning the culture
@@ -162,7 +170,7 @@ internal static partial class Program
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"FAIL  {test.Name}: {ex.Message}");
+                Console.Error.WriteLine($"FAIL  {test.Name}: {ex}");
                 return 1;
             }
         }
@@ -1034,6 +1042,49 @@ internal static partial class Program
             "An untrackable script did not report that Sherpa cannot detect or close its child application.");
     }
 
+    /// <summary>
+    /// The command written into the Windows startup entry, and that Sherpa reads
+    /// back the switch it wrote there.
+    /// </summary>
+    private static Task TestStartupCommandAsync()
+    {
+        const string executable = @"C:\Program Files\Sherpa Manager\SherpaManager.exe";
+        var quoted = "\"" + executable + "\"";
+
+        Assert(StartupRegistrationService.BuildCommand(executable, minimized: false) == quoted,
+            "Without the option the entry should be the quoted executable alone, as it always was.");
+
+        var minimized = StartupRegistrationService.BuildCommand(executable, minimized: true);
+        Assert(minimized == quoted + " " + CommandLineOptions.MinimizedSwitch,
+            $"Unexpected startup command: {minimized}");
+        // The uninstaller recognises its own entry by the quoted path at the start.
+        Assert(minimized.StartsWith(quoted + " ", StringComparison.Ordinal),
+            "The switch must follow the quoted path, which is what the uninstaller matches.");
+
+        // What Windows hands back as arguments has to be read as a minimized start.
+        string[] Arguments(string command) =>
+            command[quoted.Length..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        Assert(CommandLineOptions.Parse(Arguments(minimized)).StartMinimized,
+            "Sherpa did not recognise the switch it wrote for Windows.");
+        Assert(!CommandLineOptions.Parse(Arguments(quoted)).StartMinimized,
+            "A plain startup entry must not start minimized.");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Where a minimized start leaves the window.</summary>
+    private static Task TestStartupPlacementAsync()
+    {
+        Assert(MainWindow.ChooseStartupPlacement(startedMinimized: false, keepInTray: true) == MainWindow.StartupPlacement.Normal,
+            "Opening Sherpa normally must show it, whatever the tray setting.");
+        Assert(MainWindow.ChooseStartupPlacement(startedMinimized: false, keepInTray: false) == MainWindow.StartupPlacement.Normal,
+            "Opening Sherpa normally must show it.");
+        Assert(MainWindow.ChooseStartupPlacement(startedMinimized: true, keepInTray: true) == MainWindow.StartupPlacement.Tray,
+            "A minimized start should go to the tray when Sherpa is kept there.");
+        Assert(MainWindow.ChooseStartupPlacement(startedMinimized: true, keepInTray: false) == MainWindow.StartupPlacement.Minimized,
+            "A minimized start should go to the taskbar when Sherpa is not kept in the tray.");
+        return Task.CompletedTask;
+    }
+
     private static async Task TestSettingsPersistenceAsync()
     {
         using var directory = new TemporaryDirectory();
@@ -1044,6 +1095,7 @@ internal static partial class Program
             var store = new ProfileStore();
             var document = await store.LoadAsync();
             document.Settings.MinimizeToTrayOnClose = false;
+            document.Settings.StartMinimized = true;
             document.Profiles[0].Display = new DisplaySnapshot
             {
                 NvidiaSurround = new NvidiaSurroundSnapshot
@@ -1055,6 +1107,7 @@ internal static partial class Program
             await store.SaveAsync(document);
             var reloaded = await new ProfileStore().LoadAsync();
             Assert(!reloaded.Settings.MinimizeToTrayOnClose, "Close behavior was not persisted.");
+            Assert(reloaded.Settings.StartMinimized, "Start minimized was not persisted.");
             Assert(reloaded.Profiles[0].Display?.NvidiaSurround?.DisplayGrids.Single().Displays[1].DisplayId == 102,
                 "The complete NVIDIA display grid was not persisted.");
             reloaded.Settings.MinimizeToTrayOnClose = true;
@@ -2307,8 +2360,16 @@ internal static partial class Program
         Assert(unknown.ActivateProfile == "Work", "An unknown argument should not break later parsing.");
         Assert(unknown.Unknown.Count == 1, $"Expected one unknown argument, got {unknown.Unknown.Count}.");
 
+        // The switch Windows passes at sign-in when "Start minimized" is on.
+        var minimized = CommandLineOptions.Parse([CommandLineOptions.MinimizedSwitch]);
+        Assert(minimized.StartMinimized, "--minimized should be recognised.");
+        Assert(minimized.Unknown.Count == 0, "--minimized must not be reported as an unknown argument.");
+        Assert(CommandLineOptions.Parse(["--MINIMIZED"]).StartMinimized, "The minimized switch should be case insensitive.");
+        var both = CommandLineOptions.Parse(["--minimized", "--activate", "iRacing"]);
+        Assert(both.StartMinimized && both.ActivateProfile == "iRacing", "--minimized should combine with --activate.");
+
         var none = CommandLineOptions.Parse([]);
-        Assert(none.ActivateProfile is null && !none.ShowHelp && !none.SmokeTest,
+        Assert(none.ActivateProfile is null && !none.ShowHelp && !none.SmokeTest && !none.StartMinimized,
             "No arguments should produce no requests.");
         return Task.CompletedTask;
     }

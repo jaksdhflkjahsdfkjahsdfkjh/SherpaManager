@@ -19,6 +19,9 @@
     <NeutralLanguage>en-US</NeutralLanguage>
     <Deterministic>true</Deterministic>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- WPF owns startup; WinForms is used for tray integration. WPF requires
+         manifest DPI awareness, so the WinForms-only startup advice does not apply. -->
+    <NoWarn>$(NoWarn);WFAC010</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

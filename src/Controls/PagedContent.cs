@@ -30,6 +30,7 @@ public sealed class PagedContent : UserControl
     private ListBox? _list;
 
     public object? PageContent { get => GetValue(PageContentProperty); set => SetValue(PageContentProperty, value); }
+    public void ScrollToStart() => _activeViewport?.ScrollToTop();
 
     public PagedContent()
     {
@@ -43,9 +44,18 @@ public sealed class PagedContent : UserControl
         _pager.Children.Add(_next);
         grid.Children.Add(_pager);
         Content = grid;
-        _previous.Click += (_, _) => _activeViewport?.PageUp();
-        _next.Click += (_, _) => _activeViewport?.PageDown();
+        _previous.Click += (_, _) => TurnPage(-1);
+        _next.Click += (_, _) => TurnPage(1);
         Attach(_viewport);
+    }
+
+    private void TurnPage(int direction)
+    {
+        if (_activeViewport is not { } viewport) return;
+        // Keep context across pages, including controls straddling a page boundary.
+        // Virtualized lists report their viewport in items instead of pixels.
+        var overlap = viewport.CanContentScroll ? 1 : Math.Min(64, viewport.ViewportHeight / 3);
+        viewport.ScrollToVerticalOffset(viewport.VerticalOffset + direction * Math.Max(1, viewport.ViewportHeight - overlap));
     }
 
     private void Attach(ScrollViewer viewport)
@@ -72,6 +82,11 @@ public sealed class PagedContent : UserControl
         if (_list is not null && FindViewport(_list) is { } viewport) Attach(viewport);
     }
 
+    private void ListResized(object sender, SizeChangedEventArgs args)
+    {
+        if (_list?.SelectedItem is { } selected) _list.ScrollIntoView(selected);
+    }
+
     private static ScrollViewer? FindViewport(DependencyObject root)
     {
         if (root is ScrollViewer viewport) return viewport;
@@ -83,7 +98,11 @@ public sealed class PagedContent : UserControl
     private static void ContentChanged(DependencyObject source, DependencyPropertyChangedEventArgs args)
     {
         var control = (PagedContent)source;
-        if (control._list is not null) control._list.Loaded -= control.ListLoaded;
+        if (control._list is not null)
+        {
+            control._list.Loaded -= control.ListLoaded;
+            control._list.SizeChanged -= control.ListResized;
+        }
         control._viewport.Content = null;
         control._host.Child = null;
         control._list = args.NewValue as ListBox;
@@ -93,6 +112,7 @@ public sealed class PagedContent : UserControl
             ScrollViewer.SetVerticalScrollBarVisibility(list, ScrollBarVisibility.Hidden);
             control._host.Child = list;
             list.Loaded += control.ListLoaded;
+            list.SizeChanged += control.ListResized;
         }
         else
         {

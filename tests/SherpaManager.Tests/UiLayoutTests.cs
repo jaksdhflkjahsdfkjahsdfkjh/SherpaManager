@@ -268,6 +268,38 @@ internal static partial class Program
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// "Start minimized" only means anything for the launch Windows makes, so it
+    /// is available only while Windows startup is on.
+    /// </summary>
+    private static Task TestStartMinimizedFollowsStartupAsync()
+    {
+        OnUiThread(() =>
+        {
+            var window = CreateEditorPreview();
+            PreparePreview(window);
+            try
+            {
+                ShowPreview(window);
+                ((TabControl)window.FindName("MainTabs")).SelectedIndex = 1;
+                window.UpdateLayout();
+                var startup = (CheckBox)window.FindName("StartWithWindowsCheckBox");
+                var minimized = (CheckBox)window.FindName("StartMinimizedCheckBox");
+
+                startup.IsChecked = false;
+                window.UpdateLayout();
+                Assert(!minimized.IsEnabled, "Start minimized should be unavailable while Windows startup is off.");
+
+                startup.IsChecked = true;
+                window.UpdateLayout();
+                Assert(minimized.IsEnabled, "Start minimized should be available once Windows startup is on.");
+                AssertInside(minimized, window);
+            }
+            finally { window.Close(); }
+        });
+        return Task.CompletedTask;
+    }
+
     private static Task TestMainLayoutAsync()
     {
         OnUiThread(() =>
@@ -419,6 +451,7 @@ internal static partial class Program
 
     private static void PreparePreview(Window window)
     {
+        window.SetValue(Services.WindowPlacement.EnabledProperty, false);
         window.ShowActivated = false;
         window.ShowInTaskbar = false;
         window.WindowStartupLocation = WindowStartupLocation.Manual;

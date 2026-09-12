@@ -41,9 +41,27 @@ Releases are cut from tags. The release workflow refuses to run if the tag and t
 4. Push the commit and let it merge to `main` **before** tagging. GitHub runs a workflow as it exists at the tagged commit, so tagging a commit that predates a workflow change silently does nothing.
 5. Tag the merged commit `v<version>` and push the tag.
 
-[.github/workflows/release.yml](.github/workflows/release.yml) then verifies the version, builds, runs the tests, publishes framework-dependent, self-contained, and portable single-file `win-x64` builds, checks that each executable really is x64, compiles the Inno Setup installer from [installer/SherpaManager.iss](installer/SherpaManager.iss), writes `SHA256SUMS.txt` over all four assets, and opens a **draft** GitHub release. Review the draft and publish it manually once the archives have been checked on real hardware.
+[.github/workflows/release.yml](.github/workflows/release.yml) verifies the version fields and release notes, builds, tests, and packages all four Windows downloads. It checks packaged startup and installer upgrade/uninstall behavior, includes the first-run guide, and writes `SHA256SUMS.txt`. A tag creates a **stable draft** GitHub release; review its files and publish it from the Releases page.
 
 To package without releasing, run the workflow manually from the Actions tab and supply a version. Manual runs upload the archives as workflow artifacts and do not create a release.
+
+For a local installer, publish the self-contained build, then open the script in
+Inno Setup and choose Compile. The script reads the published version and checks
+it against `Directory.Build.props`; no manual `AppVersion` argument is needed.
+
+```powershell
+dotnet publish src/SherpaManager.csproj -c Release -r win-x64 --self-contained true -o build/publish/self-contained
+```
+
+Compile `installer/SherpaManager.iss`; the installer is written to `build/artifacts`.
+For all four downloads, use `scripts/New-ReleaseArtifacts.ps1` with a fresh publish
+root containing `framework-dependent`, `self-contained`, and `portable` builds,
+an empty output directory, and the Inno compiler path, as shown in the workflow.
+
+`--smoke-test` loads embedded assets and compiled dialogs and round-trips default
+profiles in a disposable directory. It never loads personal profiles or activates
+display/audio settings. It does not test the main window, installation, or hardware
+recovery. Real display behavior must be verified on the target hardware.
 
 ## Code style
 
